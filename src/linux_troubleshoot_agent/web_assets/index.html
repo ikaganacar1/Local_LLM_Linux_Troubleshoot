@@ -160,6 +160,25 @@
     .rail-actions .wide {
       grid-column: 1 / -1;
     }
+    .history-list {
+      display: grid;
+      gap: 6px;
+      max-height: 260px;
+      overflow: auto;
+    }
+    .history-item {
+      text-align: left;
+      border-color: var(--line);
+      min-height: 36px;
+      padding: 8px 10px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .history-item.active {
+      border-color: var(--blue);
+      box-shadow: inset 3px 0 0 var(--blue);
+    }
     .workspace {
       min-height: 0;
       overflow: auto;
@@ -434,6 +453,12 @@
           <button id="applyOrganize" class="secondary" type="button">Organize</button>
         </div>
       </div>
+      <div class="rail-card">
+        <div class="rail-title">Chats</div>
+        <button id="newChat" class="secondary" type="button">New Chat</button>
+        <button id="scrollBottom" class="secondary" type="button">Bottom</button>
+        <div id="historyList" class="history-list"></div>
+      </div>
       <button id="openSettings" class="secondary" type="button">Settings</button>
       <div class="rail-card">
         <div class="rail-title">Memory</div>
@@ -504,6 +529,7 @@
     const form = document.querySelector("#composer");
     const message = document.querySelector("#message");
     const send = document.querySelector("#send");
+    const historyList = document.querySelector("#historyList");
     const baseUrl = document.querySelector("#baseUrl");
     const model = document.querySelector("#model");
     const modelList = document.querySelector("#modelList");
@@ -528,10 +554,135 @@
     };
     let sessionId = null;
     let busy = false;
+    let autoScrollEnabled = true;
+    let currentChatId = null;
+    let chats = {};
+
+    function nearBottom() {
+      return workspace.scrollHeight - workspace.scrollTop - workspace.clientHeight < 120;
+    }
 
     function scrollToBottom(force = false) {
-      const gap = workspace.scrollHeight - workspace.scrollTop - workspace.clientHeight;
-      if (force || gap < 220) workspace.scrollTop = workspace.scrollHeight;
+      if (force || autoScrollEnabled) {
+        workspace.scrollTop = workspace.scrollHeight;
+      }
+    }
+
+    workspace.addEventListener("scroll", () => {
+      autoScrollEnabled = nearBottom();
+    });
+
+    function loadChats() {
+      try {
+        chats = JSON.parse(localStorage.getItem("lta-chats") || "{}");
+      } catch {
+        chats = {};
+      }
+      const lastId = localStorage.getItem("lta-current-chat");
+      if (lastId && chats[lastId]) {
+        openChat(lastId);
+      } else {
+        createChat();
+      }
+      renderHistory();
+    }
+
+    function saveChats() {
+      localStorage.setItem("lta-chats", JSON.stringify(chats));
+      if (currentChatId) localStorage.setItem("lta-current-chat", currentChatId);
+    }
+
+    function createChat() {
+      currentChatId = `chat-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      sessionId = null;
+      chats[currentChatId] = {
+        id: currentChatId,
+        title: "New Chat",
+        sessionId: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        items: []
+      };
+      renderChat();
+      renderHistory();
+      saveChats();
+    }
+
+    function openChat(id) {
+      if (!chats[id]) return;
+      currentChatId = id;
+      sessionId = chats[id].sessionId || null;
+      renderChat();
+      renderHistory();
+      saveChats();
+    }
+
+    function activeChat() {
+      if (!currentChatId || !chats[currentChatId]) createChat();
+      return chats[currentChatId];
+    }
+
+    function persistEntry(record) {
+      const chat = activeChat();
+      chat.items.push(record);
+      chat.updatedAt = new Date().toISOString();
+      saveChats();
+      renderHistory();
+    }
+
+    function persistSession() {
+      const chat = activeChat();
+      chat.sessionId = sessionId;
+      chat.updatedAt = new Date().toISOString();
+      saveChats();
+    }
+
+    function renderHistory() {
+      historyList.textContent = "";
+      const ordered = Object.values(chats).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+      for (const chat of ordered) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "history-item";
+        button.classList.toggle("active", chat.id === currentChatId);
+        button.textContent = chat.title || "Untitled";
+        button.title = chat.title || "Untitled";
+        button.addEventListener("click", () => openChat(chat.id));
+        historyList.appendChild(button);
+      }
+    }
+
+    function renderChat() {
+      log.textContent = "";
+      const chat = activeChat();
+      if (!chat.items.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "Run a scan or describe a problem.";
+        log.appendChild(empty);
+      } else {
+        for (const item of chat.items) {
+          addEntry(item.kind, item.title, item.body, item.pre ? codeBlock(item.pre) : null, { persist: false });
+        }
+      }
+      autoScrollEnabled = true;
+      scrollToBottom(true);
+    }
+
+    async function nameChatFromLLM(firstMessage) {
+      const chat = activeChat();
+      if (chat.title !== "New Chat") return;
+      chat.title = firstMessage.split(/\s+/).slice(0, 6).join(" ").slice(0, 64) || "Troubleshooting Chat";
+      saveChats();
+      renderHistory();
+      try {
+        const data = await post("/api/title", basePayload({ message: firstMessage }));
+        if (data.ok && data.title) {
+          chat.title = data.title;
+          saveChats();
+          renderHistory();
+        }
+      } catch {}
     }
 
     function setBusy(value, text) {
@@ -548,7 +699,7 @@
       if (empty) empty.remove();
     }
 
-    function addEntry(kind, title, body, extra) {
+    function addEntry(kind, title, body, extra, options = {}) {
       clearEmpty();
       const entry = document.createElement("div");
       entry.className = `entry ${kind}`;
@@ -563,7 +714,15 @@
       }
       if (extra) entry.appendChild(extra);
       log.appendChild(entry);
-      scrollToBottom(true);
+      if (options.persist !== false) {
+        persistEntry({
+          kind,
+          title,
+          body: body || "",
+          pre: extra ? extra.textContent : ""
+        });
+      }
+      scrollToBottom(Boolean(options.forceScroll));
       return entry;
     }
 
@@ -613,6 +772,7 @@
       live.meta.textContent = "Agent";
       live.text.className = "live-text";
       live.text.textContent = content || live.tokenText || "Done.";
+      persistEntry({ kind: "agent", title: "Agent", body: live.text.textContent, pre: "" });
       scrollToBottom();
     }
 
@@ -719,7 +879,7 @@
         modelList.appendChild(button);
       }
       markActiveModel();
-      addEntry("agent", "Models", ids.length ? `Loaded ${ids.length} model option(s).` : "No models returned.");
+      addEntry("agent", "Models", ids.length ? `Loaded ${ids.length} model option(s).` : "No models returned.", null, { persist: false });
     }
 
     function selectModel(id) {
@@ -773,7 +933,8 @@
 
     async function sendMessage(text) {
       setBusy(true, "Thinking");
-      addEntry("user", "User", text);
+      addEntry("user", "User", text, null, { forceScroll: true });
+      nameChatFromLLM(text);
       const live = createLiveEntry();
       try {
         await streamMessage(text, live);
@@ -814,6 +975,7 @@
     function handleStreamEvent(event, live) {
       if (event.type === "session") {
         sessionId = event.session_id || sessionId;
+        persistSession();
       } else if (event.type === "status") {
         updateLiveStatus(live, event.content || "Working");
       } else if (event.type === "token") {
@@ -862,6 +1024,7 @@
         return;
       }
       sessionId = data.session_id || sessionId;
+      persistSession();
       for (const event of data.events || []) renderEvent(event);
     }
 
@@ -980,6 +1143,11 @@
 
     document.querySelector("#openSettings").addEventListener("click", () => settingsDialog.showModal());
     document.querySelector("#closeSettings").addEventListener("click", () => settingsDialog.close());
+    document.querySelector("#newChat").addEventListener("click", createChat);
+    document.querySelector("#scrollBottom").addEventListener("click", () => {
+      autoScrollEnabled = true;
+      scrollToBottom(true);
+    });
     model.addEventListener("input", markActiveModel);
     refreshModels.addEventListener("click", loadModels);
     darkMode.addEventListener("change", () => applyTheme(darkMode.checked ? "dark" : "light"));
@@ -992,6 +1160,7 @@
 
     applyTheme(localStorage.getItem("lta-theme") || "dark");
     loadLocalParams();
+    loadChats();
     loadState().catch((error) => addEntry("blocked", "Error", String(error.message || error)));
     loadModels().catch((error) => addEntry("blocked", "Model List", String(error.message || error)));
   </script>

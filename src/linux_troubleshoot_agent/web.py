@@ -107,6 +107,9 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/models":
                 self._send_json(handle_models(payload))
                 return
+            if self.path == "/api/title":
+                self._send_json(handle_title(payload))
+                return
             self.send_error(HTTPStatus.NOT_FOUND)
         except LlamaCppError as exc:
             self._send_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_GATEWAY)
@@ -202,6 +205,36 @@ def handle_models(payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(item, dict) and item.get("id"):
             models.append({"id": str(item["id"]), "owned_by": str(item.get("owned_by", ""))})
     return {"ok": True, "models": models}
+
+
+def handle_title(payload: dict[str, Any]) -> dict[str, Any]:
+    env_config = Config.from_env()
+    base_url = str(payload.get("base_url") or env_config.base_url).strip()
+    model = str(payload.get("model") or env_config.model).strip()
+    api_key = str(payload.get("api_key") or "").strip() or env_config.api_key
+    user_text = str(payload.get("message") or "").strip()
+    if not user_text:
+        return {"ok": False, "error": "Message is empty."}
+
+    client = LlamaCppClient(base_url=base_url, model=model, api_key=api_key)
+    prompt = (
+        "Name this troubleshooting chat in 2 to 5 words. "
+        "Return only the title, no quotes, no punctuation at the end.\n\n"
+        + user_text[:800]
+    )
+    try:
+        title = client.chat(
+            [{"role": "user", "content": prompt}],
+            max_tokens=32,
+            temperature=0.2,
+            top_p=0.9,
+            top_k=40,
+            repeat_penalty=1.05,
+        ).strip()
+    except LlamaCppError as exc:
+        return {"ok": False, "error": str(exc)}
+    title = " ".join(title.replace("\n", " ").split()).strip(" \"'`")
+    return {"ok": True, "title": title[:64] or "Troubleshooting Chat"}
 
 
 def handle_approval(payload: dict[str, Any]) -> dict[str, Any]:

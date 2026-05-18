@@ -49,6 +49,8 @@ The GUI defaults to dark mode and streams LLM output into the chat as tokens arr
 - action permissions
 - light/dark mode
 
+Chats are kept in browser local storage, restored after page refresh, and listed in the right-side chat history. New chats are automatically named from the first message with a local LLM-generated title when available.
+
 ## Docker
 
 Run it as a restart-always local service:
