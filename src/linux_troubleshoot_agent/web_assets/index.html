@@ -548,7 +548,7 @@
         <section class="settings-section">
           <h3>LLM Parameters</h3>
           <div class="field-row">
-            <label>max tokens<input id="maxTokens" type="number" min="128" max="32768" step="128" value="4096"></label>
+            <label>max tokens<input id="maxTokens" type="number" min="-1" max="32768" step="128" value="4096"></label>
             <label>temperature<input id="temperature" type="number" min="0" max="2" step="0.05" value="0.2"></label>
           </div>
           <div class="field-row">
@@ -1096,6 +1096,40 @@
       }
     }
 
+    async function loadModelDefaults(id) {
+      const selected = (id || model.value).trim();
+      if (!selected) return;
+      const previousStatus = statusBox.textContent;
+      statusBox.textContent = "Loading model defaults";
+      try {
+        const data = await post("/api/model-defaults", {
+          base_url: baseUrl.value.trim(),
+          model: selected
+        });
+        if (!data.ok) throw new Error(data.error || "Could not load model defaults");
+        applyParameterDefaults(data.parameters || {});
+        addEntry(
+          "agent",
+          "Model Defaults",
+          `Loaded llama.cpp defaults for ${selected}. You can still edit them before sending.`,
+          null,
+          { persist: false }
+        );
+      } catch (error) {
+        addEntry("warn", "Model Defaults", String(error.message || error), null, { persist: false });
+      } finally {
+        if (!busy) statusBox.textContent = previousStatus === "Loading model defaults" ? "Ready" : previousStatus;
+      }
+    }
+
+    function applyParameterDefaults(defaults) {
+      for (const [key, field] of Object.entries(params)) {
+        const value = defaults[key];
+        if (value === undefined || value === null || !Number.isFinite(Number(value))) continue;
+        field.value = String(value);
+      }
+    }
+
     function renderModels(models) {
       modelList.textContent = "";
       const ids = models.map((item) => item.id).filter(Boolean);
@@ -1116,6 +1150,7 @@
     function selectModel(id) {
       model.value = id;
       markActiveModel();
+      loadModelDefaults(id);
     }
 
     function markActiveModel() {
@@ -1383,6 +1418,7 @@
       updateFollowButton();
     });
     model.addEventListener("input", markActiveModel);
+    model.addEventListener("change", () => loadModelDefaults(model.value.trim()));
     refreshModels.addEventListener("click", loadModels);
     darkMode.addEventListener("change", () => applyTheme(darkMode.checked ? "dark" : "light"));
     document.querySelector("#saveSettings").addEventListener("click", saveSettings);

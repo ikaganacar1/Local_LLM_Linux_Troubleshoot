@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import secrets
+import urllib.parse
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, replace
@@ -107,6 +108,9 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/models":
                 self._send_json(handle_models(payload))
                 return
+            if self.path == "/api/model-defaults":
+                self._send_json(handle_model_defaults(payload))
+                return
             if self.path == "/api/title":
                 self._send_json(handle_title(payload))
                 return
@@ -205,6 +209,100 @@ def handle_models(payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(item, dict) and item.get("id"):
             models.append({"id": str(item["id"]), "owned_by": str(item.get("owned_by", ""))})
     return {"ok": True, "models": models}
+
+
+def handle_model_defaults(payload: dict[str, Any]) -> dict[str, Any]:
+    env_config = Config.from_env()
+    base_url = str(payload.get("base_url") or env_config.base_url).strip().rstrip("/")
+    model = str(payload.get("model") or env_config.model).strip()
+    api_key = str(payload.get("api_key") or "").strip() or env_config.api_key
+    headers = {"Accept": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    errors: list[str] = []
+    for url in _props_urls(base_url, model):
+        request = urllib.request.Request(url, headers=headers, method="GET")
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                body = json.loads(response.read().decode("utf-8"))
+        except TimeoutError:
+            errors.append(f"{url} timed out")
+            continue
+        except urllib.error.URLError as exc:
+            errors.append(str(exc))
+            continue
+        except json.JSONDecodeError:
+            return {"ok": False, "error": "llama.cpp returned invalid JSON for model defaults."}
+
+        parameters = _extract_generation_parameters(body)
+        if parameters:
+            return {
+                "ok": True,
+                "model": model,
+                "parameters": parameters,
+                "source": "/props default_generation_settings",
+            }
+        errors.append("No default_generation_settings found.")
+
+    detail = "; ".join(errors[-2:]) if errors else "No response from llama.cpp."
+    return {"ok": False, "error": f"Could not load llama.cpp defaults: {detail}"}
+
+
+def _props_urls(base_url: str, model: str) -> list[str]:
+    trimmed = base_url.rstrip("/")
+    roots = []
+    if trimmed.endswith("/v1"):
+        roots.append(trimmed[: -len("/v1")])
+    roots.append(trimmed)
+
+    seen: set[str] = set()
+    urls: list[str] = []
+    query = urllib.parse.urlencode({"model": model}) if model else ""
+    for root in roots:
+        url = f"{root}/props"
+        if query:
+            url = f"{url}?{query}"
+        if url not in seen:
+            seen.add(url)
+            urls.append(url)
+    return urls
+
+
+def _extract_generation_parameters(body: Any) -> dict[str, int | float]:
+    if not isinstance(body, dict):
+        return {}
+    settings = body.get("default_generation_settings") or body.get("generation_settings")
+    if not isinstance(settings, dict):
+        slots = body.get("slots")
+        if isinstance(slots, list) and slots and isinstance(slots[0], dict):
+            slot_params = slots[0].get("params")
+            if isinstance(slot_params, dict):
+                settings = slot_params
+    if not isinstance(settings, dict):
+        return {}
+    nested_params = settings.get("params")
+    if isinstance(nested_params, dict):
+        settings = {**nested_params, **settings}
+
+    aliases = {
+        "max_tokens": ("max_tokens", "n_predict"),
+        "temperature": ("temperature", "temp"),
+        "top_p": ("top_p",),
+        "top_k": ("top_k",),
+        "repeat_penalty": ("repeat_penalty",),
+    }
+    integer_fields = {"max_tokens", "top_k"}
+    parameters: dict[str, int | float] = {}
+    for target, names in aliases.items():
+        value = next((settings[name] for name in names if name in settings), None)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        if target in integer_fields:
+            parameters[target] = int(value)
+        else:
+            parameters[target] = round(float(value), 4)
+    return parameters
 
 
 def handle_title(payload: dict[str, Any]) -> dict[str, Any]:

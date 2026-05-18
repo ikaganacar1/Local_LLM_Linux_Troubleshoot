@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from linux_troubleshoot_agent.safety import SafetyDecision, classify_command
 from linux_troubleshoot_agent.shell import run_command
@@ -18,6 +19,7 @@ from linux_troubleshoot_agent.web import (
     _permission_allows_command,
     handle_approval,
     handle_action,
+    handle_model_defaults,
 )
 
 
@@ -131,6 +133,90 @@ class WebRegressionTests(unittest.TestCase):
         self.assertEqual(skipped["events"][0]["type"], "notice")
         self.assertIn("skipped", skipped["events"][0]["content"].lower())
 
+    def test_model_defaults_are_loaded_from_llamacpp_props(self) -> None:
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps(
+                    {
+                        "default_generation_settings": {
+                            "max_tokens": -1,
+                            "temperature": 0.7,
+                            "top_p": 0.88,
+                            "top_k": 64,
+                            "repeat_penalty": 1.08,
+                        }
+                    }
+                ).encode("utf-8")
+
+        requested_urls: list[str] = []
+
+        def fake_urlopen(request, timeout=0):
+            requested_urls.append(request.full_url)
+            return FakeResponse()
+
+        with patch("linux_troubleshoot_agent.web.urllib.request.urlopen", fake_urlopen):
+            response = handle_model_defaults(
+                {
+                    "base_url": "http://127.0.0.1:11435/v1",
+                    "model": "test model",
+                }
+            )
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(
+            response["parameters"],
+            {
+                "max_tokens": -1,
+                "temperature": 0.7,
+                "top_p": 0.88,
+                "top_k": 64,
+                "repeat_penalty": 1.08,
+            },
+        )
+        self.assertEqual(requested_urls[0], "http://127.0.0.1:11435/props?model=test+model")
+
+    def test_model_defaults_support_nested_router_params(self) -> None:
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps(
+                    {
+                        "default_generation_settings": {
+                            "params": {
+                                "n_predict": 2048,
+                                "temp": 0.45,
+                                "top_p": 0.91,
+                                "top_k": 32,
+                                "repeat_penalty": 1.12,
+                            },
+                            "n_ctx": 8192,
+                        }
+                    }
+                ).encode("utf-8")
+
+        with patch("linux_troubleshoot_agent.web.urllib.request.urlopen", lambda *args, **kwargs: FakeResponse()):
+            response = handle_model_defaults(
+                {
+                    "base_url": "http://127.0.0.1:11435/v1",
+                    "model": "router-model",
+                }
+            )
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["parameters"]["max_tokens"], 2048)
+        self.assertEqual(response["parameters"]["temperature"], 0.45)
+
 
 class StaticConfigurationTests(unittest.TestCase):
     def test_docker_defaults_bind_privileged_gui_to_localhost(self) -> None:
@@ -152,6 +238,16 @@ class StaticConfigurationTests(unittest.TestCase):
         self.assertNotIn("removeLiveIfOnlyStatus(live);\n        renderEvent(event);", html)
         self.assertIn("async function runAction(action, confirmed)", html)
         self.assertIn("confirmed !== undefined", html)
+
+    def test_model_selection_fetches_llamacpp_parameter_defaults(self) -> None:
+        html = Path("src/linux_troubleshoot_agent/web_assets/index.html").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('post("/api/model-defaults"', html)
+        self.assertIn("function applyParameterDefaults(defaults)", html)
+        self.assertIn("loadModelDefaults(id);", html)
+        self.assertIn('min="-1"', html)
 
 
 if __name__ == "__main__":
