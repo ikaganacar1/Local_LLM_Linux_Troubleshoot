@@ -77,6 +77,12 @@ def _run_turn(agent: Agent, user_input: str) -> None:
             print(f"Command: {command}")
 
             if action_type == "approval":
+                safety = classify_command(command)
+                if safety.decision == SafetyDecision.FORBIDDEN:
+                    note = f"Blocked forbidden command `{command}`: {safety.reason}"
+                    agent.record_controller_note(note)
+                    print(note)
+                    return
                 if not _confirm("This command may modify the system. Run it?"):
                     agent.record_controller_note(f"User declined command `{command}`.")
                     print("Skipped.")
@@ -89,6 +95,12 @@ def _run_turn(agent: Agent, user_input: str) -> None:
             status, result = agent.handle_command(command)
             if status.startswith("approval_required"):
                 print(status.removeprefix("approval_required: ").strip())
+                safety = classify_command(command)
+                if safety.decision == SafetyDecision.FORBIDDEN:
+                    note = f"Blocked forbidden command `{command}`: {safety.reason}"
+                    agent.record_controller_note(note)
+                    print(note)
+                    return
                 if not _confirm("This command is not automatically classified as read-only. Run it?"):
                     agent.record_controller_note(f"User declined command `{command}`.")
                     print("Skipped.")

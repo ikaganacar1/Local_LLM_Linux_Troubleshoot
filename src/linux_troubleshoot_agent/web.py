@@ -158,6 +158,12 @@ def handle_approval(payload: dict[str, Any]) -> dict[str, Any]:
         session.agent.record_controller_note(f"User declined command `{command}`.")
         return {"ok": True, "session_id": session_id, "events": [{"type": "notice", "content": "Skipped."}]}
 
+    safety = classify_command(command)
+    if safety.decision == SafetyDecision.FORBIDDEN:
+        note = f"Blocked forbidden command `{command}`: {safety.reason}"
+        session.agent.record_controller_note(note)
+        return {"ok": True, "session_id": session_id, "events": [{"type": "blocked", "content": note}]}
+
     result = run_command(command, session.agent.config.timeout_seconds)
     session.agent.record_command_result(result)
     events = [_command_event(result)]
@@ -338,6 +344,12 @@ def _continue_session(session: WebSession) -> list[dict[str, Any]]:
         events.append({"type": "proposed_command", "reason": reason, "command": command})
 
         if action_type == "approval":
+            safety = classify_command(command)
+            if safety.decision == SafetyDecision.FORBIDDEN:
+                note = f"Blocked forbidden command `{command}`: {safety.reason}"
+                session.agent.record_controller_note(note)
+                events.append({"type": "blocked", "content": note})
+                continue
             if _permission_allows_command(command, settings) and not settings.require_confirmation_for_modifying:
                 result = run_command(command, session.agent.config.timeout_seconds)
                 session.agent.record_command_result(result)
@@ -397,21 +409,14 @@ def _settings_dict(settings: PermissionSettings) -> dict[str, bool]:
 
 def _permission_allows_command(command: str, settings: PermissionSettings) -> bool:
     normalized = command.strip()
-    package_markers = (
-        "apt ",
-        "apt-get ",
-        "pacman ",
-        "dnf ",
-        "zypper ",
-        "apk ",
-        "sudo apt ",
-        "sudo apt-get ",
-        "sudo pacman ",
-        "sudo dnf ",
-        "sudo zypper ",
-        "sudo apk ",
+    package_update_commands = (
+        "sudo pacman -Syu --noconfirm",
+        "sudo apt update && sudo apt upgrade -y",
+        "sudo dnf upgrade -y",
+        "sudo zypper update -y",
+        "sudo apk update && sudo apk upgrade",
     )
-    if settings.allow_package_updates and normalized.startswith(package_markers):
+    if settings.allow_package_updates and normalized in package_update_commands:
         return True
     if settings.allow_service_changes and normalized.startswith(("systemctl ", "sudo systemctl ", "service ", "sudo service ")):
         return True

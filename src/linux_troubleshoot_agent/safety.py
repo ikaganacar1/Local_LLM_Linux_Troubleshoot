@@ -124,6 +124,13 @@ SAFE_ZYPPER_PREFIXES = (("list-updates",), ("search",), ("info",))
 SAFE_APK_PREFIXES = (("version", "-l"), ("info",), ("search",))
 SAFE_IP_SUBCOMMANDS = {"a", "addr", "address", "route", "link", "-brief"}
 SAFE_NMCLI_PREFIXES = (("device", "status"), ("connection", "show"), ("general", "status"))
+SHELL_EXPANSION_PATTERNS = [
+    r"\$\(",
+    r"`",
+    r"\$\{",
+    r"<\(",
+    r">\(",
+]
 
 
 def classify_command(command: str) -> SafetyResult:
@@ -137,6 +144,13 @@ def classify_command(command: str) -> SafetyResult:
             return SafetyResult(
                 SafetyDecision.FORBIDDEN,
                 "This command matches a destructive disk, filesystem, or permission pattern.",
+            )
+
+    for pattern in SHELL_EXPANSION_PATTERNS:
+        if re.search(pattern, normalized):
+            return SafetyResult(
+                SafetyDecision.NEEDS_APPROVAL,
+                "Shell expansion or substitution can run hidden commands.",
             )
 
     if re.search(r"(^|[^<])>{1,2}[^>]", normalized) or "<<" in normalized:

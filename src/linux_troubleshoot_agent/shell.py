@@ -46,7 +46,16 @@ def run_command(command: str, timeout_seconds: int) -> CommandResult:
         return CommandResult(
             command=command,
             exit_code=124,
-            stdout=exc.stdout or "",
-            stderr=exc.stderr or f"Command timed out after {timeout_seconds} seconds.",
+            stdout=_decode_timeout_output(exc.stdout),
+            stderr=_decode_timeout_output(exc.stderr)
+            or f"Command timed out after {timeout_seconds} seconds.",
             timed_out=True,
         )
+
+
+def _decode_timeout_output(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
