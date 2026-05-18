@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 from dataclasses import dataclass
 
@@ -26,11 +28,20 @@ class CommandResult:
 
 
 def run_command(command: str, timeout_seconds: int) -> CommandResult:
+    argv = _host_command_argv(command)
+    if os.environ.get("LTA_COMMAND_TARGET") == "host" and argv is None:
+        return CommandResult(
+            command=command,
+            exit_code=127,
+            stdout="",
+            stderr="Host command mode requires `nsenter` in the container and host PID access.",
+        )
+
     try:
         completed = subprocess.run(
-            command,
-            shell=True,
-            executable="/bin/bash",
+            argv or command,
+            shell=argv is None,
+            executable="/bin/bash" if argv is None else None,
             text=True,
             capture_output=True,
             timeout=timeout_seconds,
@@ -59,3 +70,23 @@ def _decode_timeout_output(value: str | bytes | None) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
     return value
+
+
+def _host_command_argv(command: str) -> list[str] | None:
+    if os.environ.get("LTA_COMMAND_TARGET") != "host":
+        return None
+    if shutil.which("nsenter") is None:
+        return None
+    return [
+        "nsenter",
+        "--target",
+        "1",
+        "--mount",
+        "--uts",
+        "--ipc",
+        "--net",
+        "--pid",
+        "/bin/bash",
+        "-lc",
+        command,
+    ]

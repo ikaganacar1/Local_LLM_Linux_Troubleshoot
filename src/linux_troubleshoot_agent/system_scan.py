@@ -213,7 +213,7 @@ def _result_dict(result: CommandResult) -> dict[str, Any]:
 
 
 def plan_home_organization(home: Path | None = None) -> dict[str, Any]:
-    root = home or Path.home()
+    root = home or _default_home_for_file_actions()
     sources = [root / "Downloads", root / "Desktop"]
     categories = {
         "Documents": {".pdf", ".doc", ".docx", ".odt", ".txt", ".md", ".rtf", ".xls", ".xlsx", ".ods", ".ppt", ".pptx"},
@@ -257,3 +257,10 @@ def apply_home_organization(plan: dict[str, Any]) -> dict[str, Any]:
         source.rename(destination)
         applied.append({"source": str(source), "destination": str(destination)})
     return {"applied": applied, "skipped": skipped}
+
+
+def _default_home_for_file_actions() -> Path:
+    configured = os.environ.get("LTA_HOST_HOME")
+    if configured:
+        return Path(configured).expanduser()
+    return Path.home()

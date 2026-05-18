@@ -19,7 +19,7 @@ python -m linux_troubleshoot_agent.web
 Then open:
 
 ```text
-http://127.0.0.1:8765/
+http://127.0.0.1:28765/
 ```
 
 The llama.cpp base URL defaults to:
@@ -35,6 +35,31 @@ export LLAMA_CPP_BASE_URL=http://127.0.0.1:11435/v1
 export LLAMA_CPP_MODEL=local-model
 python -m linux_troubleshoot_agent.web
 ```
+
+## Docker
+
+Run it as a restart-always local service:
+
+```bash
+docker compose up -d --build
+```
+
+Then open:
+
+```text
+http://127.0.0.1:28765/
+```
+
+The Docker service is configured with:
+
+- `restart: always`
+- unusual GUI port `28765`
+- `network_mode: host`, so llama.cpp at `http://127.0.0.1:11435/v1` is reachable from the container
+- `pid: host` and `privileged: true`, so diagnostics can access the PC rather than only the container
+- `LTA_COMMAND_TARGET=host`, so command execution uses `nsenter` into the host namespaces
+- `${HOME}:/host-home`, so folder organization works on your real home directory
+
+Local memory is stored in `.lta_data/` and mounted into the container.
 
 ## Automatic Maintenance
 

@@ -1,0 +1,35 @@
+services:
+  linux-troubleshoot-agent:
+    build: .
+    container_name: linux-troubleshoot-agent
+    restart: always
+    network_mode: host
+    pid: host
+    privileged: true
+    environment:
+      LLAMA_CPP_BASE_URL: http://127.0.0.1:11435/v1
+      LLAMA_CPP_MODEL: local-model
+      LTA_COMMAND_TARGET: host
+      LTA_DATA_DIR: /app/.lta_data
+      LTA_HOST_HOME: /host-home
+    volumes:
+      - ./.lta_data:/app/.lta_data
+      - ${HOME}:/host-home
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:28765/', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    command:
+      - python
+      - -m
+      - linux_troubleshoot_agent.web
+      - --host
+      - 0.0.0.0
+      - --port
+      - "28765"
