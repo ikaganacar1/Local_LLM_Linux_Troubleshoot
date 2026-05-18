@@ -59,6 +59,7 @@
     }
     main {
       min-width: 0;
+      min-height: 0;
       display: grid;
       grid-template-rows: auto minmax(0, 1fr) auto;
     }
@@ -179,11 +180,17 @@
       border-color: var(--blue);
       box-shadow: inset 3px 0 0 var(--blue);
     }
+    .follow-off {
+      border-color: var(--amber) !important;
+      color: var(--amber);
+    }
     .workspace {
       min-height: 0;
+      height: 100%;
       overflow: auto;
       padding: 20px;
-      scroll-behavior: smooth;
+      overscroll-behavior: contain;
+      scrollbar-gutter: stable;
     }
     .log {
       max-width: 1180px;
@@ -425,7 +432,7 @@
         </div>
         <div id="status" class="status-pill">Ready</div>
       </header>
-      <div id="workspace" class="workspace">
+      <div id="workspace" class="workspace" tabindex="0">
         <div id="log" class="log">
           <div class="empty">Run a scan or describe a problem.</div>
         </div>
@@ -529,6 +536,7 @@
     const form = document.querySelector("#composer");
     const message = document.querySelector("#message");
     const send = document.querySelector("#send");
+    const scrollBottomButton = document.querySelector("#scrollBottom");
     const historyList = document.querySelector("#historyList");
     const baseUrl = document.querySelector("#baseUrl");
     const model = document.querySelector("#model");
@@ -566,11 +574,38 @@
       if (force || autoScrollEnabled) {
         workspace.scrollTop = workspace.scrollHeight;
       }
+      updateFollowButton();
     }
 
     workspace.addEventListener("scroll", () => {
       autoScrollEnabled = nearBottom();
+      updateFollowButton();
     });
+
+    workspace.addEventListener("wheel", (event) => {
+      if (event.deltaY < 0) {
+        autoScrollEnabled = false;
+        updateFollowButton();
+      }
+    }, { passive: true });
+
+    workspace.addEventListener("touchstart", () => {
+      autoScrollEnabled = false;
+      updateFollowButton();
+    }, { passive: true });
+
+    workspace.addEventListener("keydown", (event) => {
+      if (["ArrowUp", "PageUp", "Home"].includes(event.key)) {
+        autoScrollEnabled = false;
+        updateFollowButton();
+      }
+    });
+
+    function updateFollowButton() {
+      if (!scrollBottomButton) return;
+      scrollBottomButton.classList.toggle("follow-off", !autoScrollEnabled);
+      scrollBottomButton.textContent = autoScrollEnabled ? "Bottom" : "Follow Off";
+    }
 
     function loadChats() {
       try {
@@ -1147,6 +1182,7 @@
     document.querySelector("#scrollBottom").addEventListener("click", () => {
       autoScrollEnabled = true;
       scrollToBottom(true);
+      updateFollowButton();
     });
     model.addEventListener("input", markActiveModel);
     refreshModels.addEventListener("click", loadModels);
@@ -1161,6 +1197,7 @@
     applyTheme(localStorage.getItem("lta-theme") || "dark");
     loadLocalParams();
     loadChats();
+    updateFollowButton();
     loadState().catch((error) => addEntry("blocked", "Error", String(error.message || error)));
     loadModels().catch((error) => addEntry("blocked", "Model List", String(error.message || error)));
   </script>
