@@ -45,11 +45,13 @@ The GUI defaults to dark mode and streams LLM output into the chat as tokens arr
 
 - llama.cpp base URL and active model
 - model list from the configured `/v1/models` endpoint
-- max tokens, temperature, top-p, top-k, and repeat penalty
+- max tokens, temperature, top-p, top-k, and repeat penalty; leave fields blank to use llama.cpp server defaults
 - action permissions
 - light/dark mode
 
 Chats are kept in browser local storage, restored after page refresh, and listed in the right-side chat history. New chats are automatically named from the first message with a local LLM-generated title when available.
+
+The GUI also includes a workflow rail and issue dashboard. Workflow buttons run focused read-only diagnostics for display, audio, network, services, packages, boot, storage, and Bluetooth.
 
 ## Docker
 
@@ -76,6 +78,8 @@ The Docker service is configured with:
 - `${HOME}:/host-home`, so folder organization works on your real home directory
 
 Local memory is stored in `.lta_data/` and mounted into the container.
+
+The served page receives a local API token and all POST APIs require that token. POST requests with an untrusted `Origin` or `Referer` are rejected.
 
 ## Automatic Maintenance
 
@@ -110,6 +114,10 @@ python -m linux_troubleshoot_agent --check-command "journalctl -p 3 -xb"
 The agent should run read-only diagnostic commands first, explain what it is checking, rank likely causes from evidence, and ask before making system changes.
 
 It must ask before installing or removing packages, editing configs, modifying services, killing processes, rebooting, or running destructive commands.
+
+Supported command syntax is executed without a shell: argv commands, simple pipelines, and `&&`, `||`, or `;` sequencing. Unsupported shell syntax is rejected by the command runner rather than passed to Bash.
+
+Before a modifying command or maintenance action is approved, the UI shows a plan with risk, backup, rollback, and verification notes. Scans, workflows, approvals, declines, and maintenance actions are recorded in the local memory audit trail.
 
 ## Suggested Agent Config Shape
 

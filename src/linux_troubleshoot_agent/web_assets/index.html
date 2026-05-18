@@ -293,15 +293,38 @@
       gap: 8px;
       margin-top: 10px;
     }
+    .issue-dashboard,
+    .workflow-actions,
+    .audit-list {
+      display: grid;
+      gap: 8px;
+    }
+    .workflow-actions {
+      grid-template-columns: 1fr 1fr;
+    }
     .issue {
       border: 1px solid var(--line);
       border-radius: 7px;
       padding: 10px;
       background: var(--panel-2);
     }
+    .issue.high { border-left: 4px solid var(--red); }
+    .issue.medium { border-left: 4px solid var(--amber); }
+    .issue.low { border-left: 4px solid var(--blue); }
     .issue strong {
       display: block;
       margin-bottom: 5px;
+    }
+    .mini {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: pre-line;
+      word-break: break-word;
+    }
+    .plan-grid {
+      display: grid;
+      gap: 6px;
+      margin-top: 10px;
     }
     pre {
       margin: 10px 0 0;
@@ -509,6 +532,23 @@
         </div>
       </div>
       <div class="rail-card">
+        <div class="rail-title">Workflows</div>
+        <div class="workflow-actions">
+          <button class="secondary workflow" type="button" data-workflow="display">Display</button>
+          <button class="secondary workflow" type="button" data-workflow="audio">Audio</button>
+          <button class="secondary workflow" type="button" data-workflow="network">Network</button>
+          <button class="secondary workflow" type="button" data-workflow="services">Services</button>
+          <button class="secondary workflow" type="button" data-workflow="packages">Packages</button>
+          <button class="secondary workflow" type="button" data-workflow="boot">Boot</button>
+          <button class="secondary workflow" type="button" data-workflow="storage">Storage</button>
+          <button class="secondary workflow" type="button" data-workflow="bluetooth">Bluetooth</button>
+        </div>
+      </div>
+      <div class="rail-card">
+        <div class="rail-title">Issues</div>
+        <div id="issueDashboard" class="issue-dashboard mini">No scan yet.</div>
+      </div>
+      <div class="rail-card">
         <div class="rail-title">Chats</div>
         <button id="newChat" class="secondary" type="button">New Chat</button>
         <button id="scrollBottom" class="secondary" type="button">Bottom</button>
@@ -592,8 +632,10 @@
     const refreshModels = document.querySelector("#refreshModels");
     const statusBox = document.querySelector("#status");
     const memoryBox = document.querySelector("#memory");
+    const issueDashboard = document.querySelector("#issueDashboard");
     const darkMode = document.querySelector("#darkMode");
     const settingsDialog = document.querySelector("#settingsDialog");
+    const authToken = "__LTA_AUTH_TOKEN__";
     const params = {
       max_tokens: document.querySelector("#maxTokens"),
       temperature: document.querySelector("#temperature"),
@@ -1026,7 +1068,7 @@
     async function post(path, payload) {
       const response = await fetch(path, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-LTA-Token": authToken },
         body: JSON.stringify(payload)
       });
       return response.json();
@@ -1037,16 +1079,22 @@
       return Number.isFinite(value) ? value : fallback;
     }
 
+    function optionalNumberValue(field) {
+      if (field.value.trim() === "") return null;
+      const value = Number(field.value);
+      return Number.isFinite(value) ? value : null;
+    }
+
     function basePayload(extra = {}) {
       return {
         session_id: sessionId,
         base_url: baseUrl.value.trim(),
         model: model.value.trim(),
-        max_tokens: numberValue(params.max_tokens, 4096),
-        temperature: numberValue(params.temperature, 0.2),
-        top_p: numberValue(params.top_p, 0.95),
-        top_k: numberValue(params.top_k, 40),
-        repeat_penalty: numberValue(params.repeat_penalty, 1.1),
+        max_tokens: optionalNumberValue(params.max_tokens),
+        temperature: optionalNumberValue(params.temperature),
+        top_p: optionalNumberValue(params.top_p),
+        top_k: optionalNumberValue(params.top_k),
+        repeat_penalty: optionalNumberValue(params.repeat_penalty),
         ...extra
       };
     }
@@ -1172,12 +1220,75 @@
 
     function renderMemory(memory) {
       const facts = memory.facts || {};
+      const profile = memory.profile || {};
       const scans = memory.scan_history || [];
+      const audit = memory.audit || [];
+      const lastAudit = audit.slice(-3).map((item) => `${item.timestamp || ""} ${item.kind || "event"}:${item.action || ""}`).join("\n");
       memoryBox.textContent = [
         facts.os_name || "Unknown OS",
         facts.package_manager ? `packages: ${facts.package_manager}` : "packages: unknown",
-        scans.length ? `scans: ${scans.length}` : "scans: 0"
-      ].join("\n");
+        profile.gpu ? `gpu: ${profile.gpu}` : "",
+        profile.audio_server ? `audio: ${profile.audio_server}` : "",
+        profile.network_manager ? `network: ${profile.network_manager}` : "",
+        scans.length ? `scans: ${scans.length}` : "scans: 0",
+        audit.length ? `audit: ${audit.length}` : "audit: 0",
+        lastAudit
+      ].filter(Boolean).join("\n");
+    }
+
+    function renderIssueDashboard(summary) {
+      issueDashboard.textContent = "";
+      const issues = summary?.issues || [];
+      if (!issues.length) {
+        issueDashboard.textContent = "No obvious issues detected.";
+        return;
+      }
+      for (const issue of issues.slice(0, 6)) {
+        const card = document.createElement("div");
+        card.className = `issue ${String(issue.severity || "low").toLowerCase()}`;
+        const title = document.createElement("strong");
+        title.textContent = `${issue.severity || "info"}: ${issue.title || "Issue"}`;
+        const detail = document.createElement("div");
+        detail.textContent = issue.next_step || issue.detail || "";
+        card.append(title, detail);
+        issueDashboard.appendChild(card);
+      }
+    }
+
+    function renderPlan(plan) {
+      const wrap = document.createElement("div");
+      wrap.className = "plan-grid";
+      if (!plan) return wrap;
+      for (const [label, value] of Object.entries({
+        Risk: plan.risk,
+        Backup: plan.backup,
+        Rollback: plan.rollback,
+        Verify: plan.verify
+      })) {
+        if (!value) continue;
+        const row = document.createElement("div");
+        row.className = "mini";
+        row.textContent = `${label}: ${value}`;
+        wrap.appendChild(row);
+      }
+      return wrap;
+    }
+
+    function workflowLabel(name) {
+      return name.charAt(0).toUpperCase() + name.slice(1);
+    }
+
+    async function runWorkflow(name) {
+      setBusy(true, `Running ${workflowLabel(name)} workflow`);
+      try {
+        const data = await post("/api/action", basePayload({ action: `workflow_${name}` }));
+        handleResponse(data);
+        if (data.memory) renderMemory(data.memory);
+      } catch (error) {
+        addEntry("blocked", "Error", String(error.message || error));
+      } finally {
+        setBusy(false);
+      }
     }
 
     async function saveSettings() {
@@ -1215,7 +1326,7 @@
     async function streamMessage(text, live) {
       const response = await fetch("/api/message-stream", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-LTA-Token": authToken },
         body: JSON.stringify(basePayload({ message: text }))
       });
       if (!response.ok || !response.body) throw new Error(`Streaming request failed with HTTP ${response.status}`);
@@ -1293,6 +1404,7 @@
       }
       sessionId = data.session_id || sessionId;
       persistSession();
+      if (data.memory) renderMemory(data.memory);
       for (const event of data.events || []) renderEvent(event);
     }
 
@@ -1301,6 +1413,8 @@
         addEntry("agent", "Agent", event.content);
       } else if (event.type === "scan_summary") {
         renderScanSummary(event.summary, event.results);
+      } else if (event.type === "workflow_summary") {
+        renderWorkflowSummary(event.workflow, event.summary, event.results);
       } else if (event.type === "proposed_command") {
         const wrap = document.createElement("div");
         const reason = document.createElement("div");
@@ -1313,9 +1427,9 @@
         wrap.appendChild(codeBlock(`exit code: ${event.exit_code}\n\nSTDOUT:\n${event.stdout || "(empty)"}\n\nSTDERR:\n${event.stderr || "(empty)"}`));
         addEntry(event.exit_code === 0 ? "agent" : "warn", "Command Result", event.command, wrap);
       } else if (event.type === "approval_required") {
-        renderApproval(event.reason, event.command, approveCommand);
+        renderApproval(event.reason, event.command, approveCommand, event.plan);
       } else if (event.type === "action_confirmation") {
-        renderApproval(event.reason, event.command, (approved) => runAction(event.action, approved));
+        renderApproval(event.reason, event.command, (approved) => runAction(event.action, approved), event.plan);
       } else if (event.type === "organize_plan") {
         renderOrganizePlan(event.plan);
       } else if (event.type === "organize_result") {
@@ -1329,6 +1443,7 @@
     }
 
     function renderScanSummary(summary, results) {
+      renderIssueDashboard(summary);
       const wrap = document.createElement("div");
       const top = document.createElement("div");
       top.textContent = `${summary.os_name || "Unknown OS"} | ${summary.package_manager || "no package manager"} | ${summary.kernel || "unknown kernel"}`;
@@ -1337,7 +1452,7 @@
       issues.className = "issue-list";
       for (const issue of summary.issues || []) {
         const row = document.createElement("div");
-        row.className = "issue";
+        row.className = `issue ${String(issue.severity || "low").toLowerCase()}`;
         const title = document.createElement("strong");
         title.textContent = `${issue.severity}: ${issue.title}`;
         const detail = document.createElement("div");
@@ -1358,6 +1473,38 @@
       addEntry("agent", "System Scan", "", wrap);
     }
 
+    function renderWorkflowSummary(workflow, summary, results) {
+      renderIssueDashboard(summary);
+      const wrap = document.createElement("div");
+      const top = document.createElement("div");
+      top.textContent = `${workflowLabel(workflow || "workflow")} workflow | ${summary.package_manager || "no package manager"} | ${summary.issues?.length || 0} issue(s)`;
+      wrap.appendChild(top);
+      const issues = document.createElement("div");
+      issues.className = "issue-list";
+      for (const issue of summary.issues || []) {
+        const row = document.createElement("div");
+        row.className = `issue ${String(issue.severity || "low").toLowerCase()}`;
+        const title = document.createElement("strong");
+        title.textContent = `${issue.severity}: ${issue.title}`;
+        const detail = document.createElement("div");
+        detail.textContent = issue.detail || "";
+        const next = document.createElement("div");
+        next.className = "mini";
+        next.textContent = issue.next_step || "";
+        row.append(title, detail, next);
+        issues.appendChild(row);
+      }
+      if (!(summary.issues || []).length) {
+        const row = document.createElement("div");
+        row.className = "issue";
+        row.textContent = "No obvious issues detected by this workflow.";
+        issues.appendChild(row);
+      }
+      wrap.appendChild(issues);
+      wrap.appendChild(codeBlock(JSON.stringify(results, null, 2)));
+      addEntry("agent", `${workflowLabel(workflow || "Workflow")} Workflow`, "", wrap);
+    }
+
     function renderOrganizePlan(plan) {
       const moves = plan.moves || [];
       const shown = moves.slice(0, 30);
@@ -1365,12 +1512,13 @@
       addEntry("agent", "Folder Plan", body, codeBlock(JSON.stringify(shown, null, 2)));
     }
 
-    function renderApproval(reason, command, callback) {
+    function renderApproval(reason, command, callback, plan) {
       const wrap = document.createElement("div");
       const reasonEl = document.createElement("div");
       reasonEl.textContent = reason || "Approval required";
       wrap.appendChild(reasonEl);
       wrap.appendChild(codeBlock(command));
+      wrap.appendChild(renderPlan(plan));
       const actions = document.createElement("div");
       actions.className = "approval-actions";
       const run = document.createElement("button");
@@ -1427,6 +1575,9 @@
     document.querySelector("#applyUpdates").addEventListener("click", () => runAction("apply_updates"));
     document.querySelector("#previewOrganize").addEventListener("click", () => runAction("organize_preview"));
     document.querySelector("#applyOrganize").addEventListener("click", () => runAction("organize_apply"));
+    for (const button of document.querySelectorAll(".workflow")) {
+      button.addEventListener("click", () => runWorkflow(button.dataset.workflow));
+    }
 
     applyTheme(localStorage.getItem("lta-theme") || "dark");
     loadLocalParams();

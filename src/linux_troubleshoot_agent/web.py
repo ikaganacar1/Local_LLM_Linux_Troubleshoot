@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hmac
 import json
 import secrets
 import urllib.parse
@@ -18,11 +19,21 @@ from .llama_cpp_client import LlamaCppError
 from .llama_cpp_client import LlamaCppClient
 from .safety import SafetyDecision, classify_command
 from .shell import CommandResult, run_command
-from .storage import PermissionSettings, load_memory, load_settings, remember_scan, save_settings
+from .storage import (
+    PermissionSettings,
+    append_audit,
+    auth_token,
+    load_memory,
+    load_settings,
+    remember_scan,
+    save_settings,
+)
 from .system_scan import (
+    WORKFLOWS,
     apply_home_organization,
     detect_package_manager,
     plan_home_organization,
+    run_workflow_scan,
     run_system_scan,
     update_apply_command,
     update_check_command,
@@ -34,6 +45,7 @@ class WebSession:
     agent: Agent
     pending_command: str | None = None
     pending_reason: str | None = None
+    pending_plan: dict[str, Any] | None = None
     pending_organize_plan: dict[str, Any] | None = None
 
 
@@ -61,7 +73,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_HEAD(self) -> None:
         if self.path in {"/", "/index.html"}:
-            data = _asset("index.html")
+            data = _index_asset()
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
@@ -71,7 +83,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path in {"/", "/index.html"}:
-            self._send_bytes(_asset("index.html"), "text/html; charset=utf-8")
+            self._send_bytes(_index_asset(), "text/html; charset=utf-8")
             return
         if self.path == "/api/state":
             self._send_json(
@@ -86,6 +98,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         try:
+            if not self._trusted_origin() or not self._authorized():
+                self._send_json({"ok": False, "error": "Unauthorized local request."}, HTTPStatus.FORBIDDEN)
+                return
             payload = self._read_json()
             if self.path == "/api/message-stream":
                 self._send_message_stream(payload)
@@ -160,6 +175,17 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             emit({"type": "error", "content": str(exc)})
 
+    def _authorized(self) -> bool:
+        supplied = self.headers.get("X-LTA-Token", "")
+        return hmac.compare_digest(supplied, auth_token())
+
+    def _trusted_origin(self) -> bool:
+        origin = self.headers.get("Origin") or self.headers.get("Referer")
+        if not origin:
+            return True
+        parsed = urllib.parse.urlparse(origin)
+        return parsed.netloc == self.headers.get("Host")
+
 
 def handle_message(payload: dict[str, Any]) -> dict[str, Any]:
     session_id, session = _get_or_create_session(payload)
@@ -169,6 +195,7 @@ def handle_message(payload: dict[str, Any]) -> dict[str, Any]:
 
     session.pending_command = None
     session.pending_reason = None
+    session.pending_plan = None
     session.agent.add_user_message(message)
     events = _continue_session(session)
     return {"ok": True, "session_id": session_id, "events": events}
@@ -184,6 +211,7 @@ def handle_message_stream(payload: dict[str, Any], emit) -> None:
 
     session.pending_command = None
     session.pending_reason = None
+    session.pending_plan = None
     session.agent.add_user_message(message)
     _continue_session_stream(session, emit)
 
@@ -347,9 +375,12 @@ def handle_approval(payload: dict[str, Any]) -> dict[str, Any]:
     approved = bool(payload.get("approved"))
     session.pending_command = None
     session.pending_reason = None
+    plan = session.pending_plan
+    session.pending_plan = None
 
     if not approved:
         session.agent.record_controller_note(f"User declined command `{command}`.")
+        append_audit({"kind": "command", "action": "declined", "command": command, "plan": plan})
         return {"ok": True, "session_id": session_id, "events": [{"type": "notice", "content": "Skipped."}]}
 
     safety = classify_command(command)
@@ -358,7 +389,7 @@ def handle_approval(payload: dict[str, Any]) -> dict[str, Any]:
         session.agent.record_controller_note(note)
         return {"ok": True, "session_id": session_id, "events": [{"type": "blocked", "content": note}]}
 
-    result = run_command(command, session.agent.config.timeout_seconds)
+    result = _execute_command(session, command, session.agent.config.timeout_seconds, "user_approved", plan)
     session.agent.record_command_result(result)
     events = [_command_event(result)]
     events.extend(_continue_session(session))
@@ -390,6 +421,7 @@ def handle_scan(payload: dict[str, Any]) -> dict[str, Any]:
 
     scan = run_system_scan(session.agent.config.timeout_seconds)
     memory = remember_scan(scan["summary"])
+    append_audit({"kind": "scan", "action": "run", "issue_count": len(scan["summary"].get("issues", []))})
     events = [
         {
             "type": "scan_summary",
@@ -421,7 +453,7 @@ def handle_action(payload: dict[str, Any]) -> dict[str, Any]:
         command = update_check_command(package_manager)
         if not command:
             return {"ok": False, "session_id": session_id, "error": "No supported package manager detected."}
-        result = run_command(command, session.agent.config.timeout_seconds)
+        result = _execute_command(session, command, session.agent.config.timeout_seconds, "workflow")
         return {
             "ok": True,
             "session_id": session_id,
@@ -444,7 +476,9 @@ def handle_action(payload: dict[str, Any]) -> dict[str, Any]:
             return {"ok": False, "session_id": session_id, "error": "No supported package manager detected."}
         if settings.require_confirmation_for_modifying and payload.get("confirmed") is not True:
             if payload.get("confirmed") is False:
+                append_audit({"kind": "action", "action": "declined", "name": "apply_updates", "command": command})
                 return _declined_action_response(session_id, "Package update skipped.")
+            reason = f"This will run system package updates through {package_manager}."
             return {
                 "ok": True,
                 "session_id": session_id,
@@ -452,13 +486,28 @@ def handle_action(payload: dict[str, Any]) -> dict[str, Any]:
                     {
                         "type": "action_confirmation",
                         "action": "apply_updates",
-                        "reason": f"This will run system package updates through {package_manager}.",
+                        "reason": reason,
                         "command": command,
+                        "plan": _action_plan("apply_updates", command, reason),
                     }
                 ],
             }
-        result = run_command(command, 1800)
+        result = _execute_command(session, command, 1800, "user_approved", _action_plan("apply_updates", command, "Package update action"))
         return {"ok": True, "session_id": session_id, "events": [_command_event(result)]}
+
+    if action.startswith("workflow_"):
+        workflow = action.removeprefix("workflow_")
+        if workflow not in WORKFLOWS:
+            return {"ok": False, "session_id": session_id, "error": f"Unknown workflow: {workflow}"}
+        scan = run_workflow_scan(workflow, session.agent.config.timeout_seconds)
+        memory = remember_scan(scan["summary"])
+        append_audit({"kind": "workflow", "action": "run", "name": workflow})
+        return {
+            "ok": True,
+            "session_id": session_id,
+            "events": [{"type": "workflow_summary", "workflow": workflow, "summary": scan["summary"], "results": scan["results"]}],
+            "memory": memory,
+        }
 
     if action == "organize_preview":
         plan = plan_home_organization()
@@ -475,7 +524,9 @@ def handle_action(payload: dict[str, Any]) -> dict[str, Any]:
         plan = session.pending_organize_plan or plan_home_organization()
         if settings.require_confirmation_for_modifying and payload.get("confirmed") is not True:
             if payload.get("confirmed") is False:
+                append_audit({"kind": "action", "action": "declined", "name": "organize_apply"})
                 return _declined_action_response(session_id, "Folder organization skipped.")
+            reason = f"This will move {plan.get('move_count', 0)} files into ~/Organized by type."
             return {
                 "ok": True,
                 "session_id": session_id,
@@ -483,12 +534,14 @@ def handle_action(payload: dict[str, Any]) -> dict[str, Any]:
                     {
                         "type": "action_confirmation",
                         "action": "organize_apply",
-                        "reason": f"This will move {plan.get('move_count', 0)} files into ~/Organized by type.",
+                        "reason": reason,
                         "command": "internal file organization action",
+                        "plan": _action_plan("organize_apply", "internal file organization action", reason),
                     }
                 ],
             }
         result = apply_home_organization(plan)
+        append_audit({"kind": "action", "action": "applied", "name": "organize_apply", "moved": len(result.get("applied", [])), "skipped": len(result.get("skipped", []))})
         session.pending_organize_plan = None
         return {"ok": True, "session_id": session_id, "events": [{"type": "organize_result", "result": result}]}
 
@@ -522,11 +575,11 @@ def _get_or_create_session(payload: dict[str, Any]) -> tuple[str, WebSession]:
         system_prompt_path=env_config.system_prompt_path,
         timeout_seconds=env_config.timeout_seconds,
         max_steps=env_config.max_steps,
-        max_tokens=_int_payload(payload, "max_tokens", env_config.max_tokens),
-        temperature=_float_payload(payload, "temperature", env_config.temperature),
-        top_p=_float_payload(payload, "top_p", env_config.top_p),
-        top_k=_int_payload(payload, "top_k", env_config.top_k),
-        repeat_penalty=_float_payload(payload, "repeat_penalty", env_config.repeat_penalty),
+        max_tokens=_optional_int_payload(payload, "max_tokens", env_config.max_tokens),
+        temperature=_optional_float_payload(payload, "temperature", env_config.temperature),
+        top_p=_optional_float_payload(payload, "top_p", env_config.top_p),
+        top_k=_optional_int_payload(payload, "top_k", env_config.top_k),
+        repeat_penalty=_optional_float_payload(payload, "repeat_penalty", env_config.repeat_penalty),
     )
     session_id = secrets.token_urlsafe(16)
     SESSIONS[session_id] = WebSession(agent=Agent.create(config))
@@ -543,11 +596,11 @@ def _update_session_config(session: WebSession, payload: dict[str, Any]) -> None
         base_url=base_url,
         model=model,
         api_key=api_key,
-        max_tokens=_int_payload(payload, "max_tokens", old.max_tokens),
-        temperature=_float_payload(payload, "temperature", old.temperature),
-        top_p=_float_payload(payload, "top_p", old.top_p),
-        top_k=_int_payload(payload, "top_k", old.top_k),
-        repeat_penalty=_float_payload(payload, "repeat_penalty", old.repeat_penalty),
+        max_tokens=_optional_int_payload(payload, "max_tokens", old.max_tokens),
+        temperature=_optional_float_payload(payload, "temperature", old.temperature),
+        top_p=_optional_float_payload(payload, "top_p", old.top_p),
+        top_k=_optional_int_payload(payload, "top_k", old.top_k),
+        repeat_penalty=_optional_float_payload(payload, "repeat_penalty", old.repeat_penalty),
     )
     if new_config != old:
         session.agent.config = new_config
@@ -589,13 +642,14 @@ def _continue_session(session: WebSession) -> list[dict[str, Any]]:
                 events.append({"type": "blocked", "content": note})
                 continue
             if _permission_allows_command(command, settings) and not settings.require_confirmation_for_modifying:
-                result = run_command(command, session.agent.config.timeout_seconds)
+                result = _execute_command(session, command, session.agent.config.timeout_seconds, "auto_permitted", _fix_plan(command, reason))
                 session.agent.record_command_result(result)
                 events.append(_command_event(result))
                 continue
             session.pending_command = command
             session.pending_reason = reason
-            events.append({"type": "approval_required", "reason": reason, "command": command})
+            session.pending_plan = _fix_plan(command, reason)
+            events.append({"type": "approval_required", "reason": reason, "command": command, "plan": session.pending_plan})
             return events
 
         safety = classify_command(command)
@@ -607,16 +661,17 @@ def _continue_session(session: WebSession) -> list[dict[str, Any]]:
 
         if safety.decision == SafetyDecision.NEEDS_APPROVAL:
             if _permission_allows_command(command, settings) and not settings.require_confirmation_for_modifying:
-                result = run_command(command, session.agent.config.timeout_seconds)
+                result = _execute_command(session, command, session.agent.config.timeout_seconds, "auto_permitted", _fix_plan(command, safety.reason))
                 session.agent.record_command_result(result)
                 events.append(_command_event(result))
                 continue
             session.pending_command = command
             session.pending_reason = safety.reason
-            events.append({"type": "approval_required", "reason": safety.reason, "command": command})
+            session.pending_plan = _fix_plan(command, reason, safety.reason)
+            events.append({"type": "approval_required", "reason": safety.reason, "command": command, "plan": session.pending_plan})
             return events
 
-        result = run_command(command, session.agent.config.timeout_seconds)
+        result = _execute_command(session, command, session.agent.config.timeout_seconds, "safe_diagnostic")
         session.agent.record_command_result(result)
         events.append(_command_event(result))
 
@@ -663,13 +718,14 @@ def _continue_session_stream(session: WebSession, emit) -> None:
                 continue
             if _permission_allows_command(command, settings) and not settings.require_confirmation_for_modifying:
                 emit({"type": "status", "content": "Running approved command"})
-                result = run_command(command, session.agent.config.timeout_seconds)
+                result = _execute_command(session, command, session.agent.config.timeout_seconds, "auto_permitted", _fix_plan(command, reason))
                 session.agent.record_command_result(result)
                 emit(_command_event(result))
                 continue
             session.pending_command = command
             session.pending_reason = reason
-            emit({"type": "approval_required", "reason": reason, "command": command})
+            session.pending_plan = _fix_plan(command, reason)
+            emit({"type": "approval_required", "reason": reason, "command": command, "plan": session.pending_plan})
             emit({"type": "done"})
             return
 
@@ -683,18 +739,19 @@ def _continue_session_stream(session: WebSession, emit) -> None:
         if safety.decision == SafetyDecision.NEEDS_APPROVAL:
             if _permission_allows_command(command, settings) and not settings.require_confirmation_for_modifying:
                 emit({"type": "status", "content": "Running permitted command"})
-                result = run_command(command, session.agent.config.timeout_seconds)
+                result = _execute_command(session, command, session.agent.config.timeout_seconds, "auto_permitted", _fix_plan(command, safety.reason))
                 session.agent.record_command_result(result)
                 emit(_command_event(result))
                 continue
             session.pending_command = command
             session.pending_reason = safety.reason
-            emit({"type": "approval_required", "reason": safety.reason, "command": command})
+            session.pending_plan = _fix_plan(command, reason, safety.reason)
+            emit({"type": "approval_required", "reason": safety.reason, "command": command, "plan": session.pending_plan})
             emit({"type": "done"})
             return
 
         emit({"type": "status", "content": f"Running diagnostic: {command}"})
-        result = run_command(command, session.agent.config.timeout_seconds)
+        result = _execute_command(session, command, session.agent.config.timeout_seconds, "safe_diagnostic")
         session.agent.record_command_result(result)
         emit(_command_event(result))
 
@@ -711,6 +768,68 @@ def _command_event(result: CommandResult) -> dict[str, Any]:
         "stderr": result.stderr[-4000:],
         "timed_out": result.timed_out,
     }
+
+
+def _execute_command(
+    session: WebSession,
+    command: str,
+    timeout_seconds: int,
+    approval: str,
+    plan: dict[str, Any] | None = None,
+) -> CommandResult:
+    result = run_command(command, timeout_seconds)
+    append_audit(
+        {
+            "kind": "command",
+            "action": approval,
+            "command": command,
+            "exit_code": result.exit_code,
+            "timed_out": result.timed_out,
+            "plan": plan,
+        }
+    )
+    return result
+
+
+def _fix_plan(command: str, reason: str, safety_reason: str | None = None) -> dict[str, Any]:
+    command_lower = command.lower()
+    risk = "medium"
+    rollback = "No automatic rollback is known. Review command output before continuing."
+    verify = "Re-run the diagnostic command or scan after this action."
+    backup = "Not required unless a config file is edited."
+    if any(token in command_lower for token in ("apt ", "pacman ", "dnf ", "zypper ", "apk ")):
+        risk = "high"
+        rollback = "Package updates are not fully reversible. Use package manager history/cache if rollback is needed."
+        verify = "Check package manager output and run the update check again."
+    elif "systemctl" in command_lower or "service " in command_lower:
+        risk = "medium"
+        rollback = "Use the inverse systemctl action if the service change causes problems."
+        verify = "Run systemctl status for the affected service."
+    elif command_lower.startswith(("mv ", "cp ", "mkdir ", "touch ")):
+        risk = "medium"
+        rollback = "Move files back from the shown destination or remove only files created by this action."
+        verify = "List the affected paths and confirm ownership and contents."
+    return {
+        "risk": risk,
+        "reason": reason or safety_reason or "Approval required before modifying the system.",
+        "backup": backup,
+        "rollback": rollback,
+        "verify": verify,
+    }
+
+
+def _action_plan(action: str, command: str, reason: str) -> dict[str, Any]:
+    plan = _fix_plan(command, reason)
+    if action == "organize_apply":
+        plan.update(
+            {
+                "risk": "medium",
+                "backup": "No backup is created; files are moved only if the destination does not exist.",
+                "rollback": "Move files back from ~/Organized to their original paths shown in the plan.",
+                "verify": "Review the Organization Result list after the action.",
+            }
+        )
+    return plan
 
 
 def _settings_dict(settings: PermissionSettings) -> dict[str, bool]:
@@ -753,8 +872,32 @@ def _float_payload(payload: dict[str, Any], key: str, default: float) -> float:
         return default
 
 
+def _optional_int_payload(payload: dict[str, Any], key: str, default: int | None) -> int | None:
+    if key in payload and payload.get(key) in (None, ""):
+        return None
+    try:
+        return int(payload.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _optional_float_payload(payload: dict[str, Any], key: str, default: float | None) -> float | None:
+    if key in payload and payload.get(key) in (None, ""):
+        return None
+    try:
+        return float(payload.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
 def _asset(name: str) -> bytes:
     return files("linux_troubleshoot_agent").joinpath("web_assets", name).read_bytes()
+
+
+def _index_asset() -> bytes:
+    html = _asset("index.html").decode("utf-8")
+    html = html.replace("__LTA_AUTH_TOKEN__", auth_token())
+    return html.encode("utf-8")
 
 
 if __name__ == "__main__":

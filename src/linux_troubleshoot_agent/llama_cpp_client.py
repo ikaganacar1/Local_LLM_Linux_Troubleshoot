@@ -21,22 +21,18 @@ class LlamaCppClient:
         self,
         messages: list[dict[str, str]],
         *,
-        temperature: float = 0.2,
-        max_tokens: int = 4096,
-        top_p: float = 0.95,
-        top_k: int = 40,
-        repeat_penalty: float = 1.1,
+        temperature: float | None = 0.2,
+        max_tokens: int | None = 4096,
+        top_p: float | None = 0.95,
+        top_k: int | None = 40,
+        repeat_penalty: float | None = 1.1,
     ) -> str:
         url = f"{self.base_url.rstrip('/')}/chat/completions"
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "top_p": top_p,
-            "top_k": top_k,
-            "repeat_penalty": repeat_penalty,
         }
+        _add_sampling_params(payload, temperature, max_tokens, top_p, top_k, repeat_penalty)
         data = json.dumps(payload).encode("utf-8")
         headers = {"Content-Type": "application/json"}
         if self.api_key:
@@ -62,23 +58,19 @@ class LlamaCppClient:
         self,
         messages: list[dict[str, str]],
         *,
-        temperature: float = 0.2,
-        max_tokens: int = 4096,
-        top_p: float = 0.95,
-        top_k: int = 40,
-        repeat_penalty: float = 1.1,
+        temperature: float | None = 0.2,
+        max_tokens: int | None = 4096,
+        top_p: float | None = 0.95,
+        top_k: int | None = 40,
+        repeat_penalty: float | None = 1.1,
     ):
         url = f"{self.base_url.rstrip('/')}/chat/completions"
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "top_p": top_p,
-            "top_k": top_k,
-            "repeat_penalty": repeat_penalty,
             "stream": True,
         }
+        _add_sampling_params(payload, temperature, max_tokens, top_p, top_k, repeat_penalty)
         data = json.dumps(payload).encode("utf-8")
         headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
         if self.api_key:
@@ -109,3 +101,23 @@ class LlamaCppClient:
             raise LlamaCppError(
                 f"Could not reach llama.cpp at {url}. Is the server running?"
             ) from exc
+
+
+def _add_sampling_params(
+    payload: dict[str, Any],
+    temperature: float | None,
+    max_tokens: int | None,
+    top_p: float | None,
+    top_k: int | None,
+    repeat_penalty: float | None,
+) -> None:
+    values = {
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "top_p": top_p,
+        "top_k": top_k,
+        "repeat_penalty": repeat_penalty,
+    }
+    for key, value in values.items():
+        if value is not None:
+            payload[key] = value

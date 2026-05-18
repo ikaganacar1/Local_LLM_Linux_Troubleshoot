@@ -13,11 +13,11 @@ class Config:
     system_prompt_path: Path | None
     timeout_seconds: int
     max_steps: int
-    max_tokens: int
-    temperature: float
-    top_p: float
-    top_k: int
-    repeat_penalty: float
+    max_tokens: int | None
+    temperature: float | None
+    top_p: float | None
+    top_k: int | None
+    repeat_penalty: float | None
 
     @classmethod
     def from_env(cls) -> "Config":

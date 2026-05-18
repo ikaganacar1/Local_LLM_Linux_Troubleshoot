@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,8 +22,10 @@ DEFAULT_MEMORY: dict[str, Any] = {
     "created_at": None,
     "updated_at": None,
     "facts": {},
+    "profile": {},
     "scan_history": [],
     "notes": [],
+    "audit": [],
 }
 
 
@@ -57,6 +60,24 @@ def save_settings(settings: PermissionSettings) -> None:
     _write_json(data_dir() / "settings.json", asdict(settings))
 
 
+def auth_token() -> str:
+    configured = os.environ.get("LTA_AUTH_TOKEN")
+    if configured:
+        return configured
+    path = data_dir() / "auth.json"
+    if path.exists():
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            token = str(payload.get("token") or "")
+            if token:
+                return token
+        except json.JSONDecodeError:
+            pass
+    token = secrets.token_urlsafe(32)
+    _write_json(path, {"token": token, "created_at": _now()})
+    return token
+
+
 def load_memory() -> dict[str, Any]:
     path = data_dir() / "memory.json"
     if not path.exists():
@@ -88,6 +109,18 @@ def remember_scan(summary: dict[str, Any]) -> dict[str, Any]:
     for key in ("os_id", "os_name", "os_version", "kernel", "package_manager"):
         if summary.get(key):
             facts[key] = summary[key]
+    profile = memory.setdefault("profile", {})
+    for key in (
+        "session_type",
+        "desktop",
+        "gpu",
+        "audio_server",
+        "network_manager",
+        "failed_services",
+        "update_count",
+    ):
+        if summary.get(key) is not None:
+            profile[key] = summary[key]
     history = memory.setdefault("scan_history", [])
     history.append(
         {
@@ -101,6 +134,16 @@ def remember_scan(summary: dict[str, Any]) -> dict[str, Any]:
     del history[:-20]
     save_memory(memory)
     return memory
+
+
+def append_audit(event: dict[str, Any]) -> dict[str, Any]:
+    memory = load_memory()
+    audit = memory.setdefault("audit", [])
+    record = {"timestamp": _now(), **event}
+    audit.append(record)
+    del audit[:-100]
+    save_memory(memory)
+    return record
 
 
 def _write_json(path: Path, payload: Any) -> None:

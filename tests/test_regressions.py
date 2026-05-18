@@ -12,10 +12,14 @@ from unittest.mock import patch
 
 from linux_troubleshoot_agent.safety import SafetyDecision, classify_command
 from linux_troubleshoot_agent.shell import run_command
-from linux_troubleshoot_agent.storage import PermissionSettings, save_settings
+from linux_troubleshoot_agent.storage import PermissionSettings, auth_token, load_memory, save_settings
 from linux_troubleshoot_agent.web import (
+    Handler,
     SESSIONS,
     WebSession,
+    _index_asset,
+    _optional_float_payload,
+    _optional_int_payload,
     _permission_allows_command,
     handle_approval,
     handle_action,
@@ -74,6 +78,16 @@ class SafetyRegressionTests(unittest.TestCase):
         self.assertIsInstance(result.stdout, str)
         self.assertIsInstance(result.stderr, str)
         json.dumps({"stdout": result.stdout, "stderr": result.stderr})
+
+    def test_command_runner_does_not_execute_shell_substitution(self) -> None:
+        marker = Path(tempfile.gettempdir()) / f"lta-shell-{os.getpid()}"
+        if marker.exists():
+            marker.unlink()
+
+        result = run_command(f"ls $(touch {marker})", 5)
+
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertFalse(marker.exists())
 
     def test_module_preserves_forbidden_exit_code(self) -> None:
         completed = subprocess.run(
@@ -217,6 +231,26 @@ class WebRegressionTests(unittest.TestCase):
         self.assertEqual(response["parameters"]["max_tokens"], 2048)
         self.assertEqual(response["parameters"]["temperature"], 0.45)
 
+    def test_workflow_action_returns_structured_scan_and_audit(self) -> None:
+        with patch("linux_troubleshoot_agent.web.run_workflow_scan") as scan:
+            scan.return_value = {
+                "summary": {
+                    "workflow": "network",
+                    "package_manager": "apt",
+                    "issues": [{"severity": "medium", "title": "Network issue"}],
+                },
+                "results": {"network": {"stdout": "ok", "stderr": "", "exit_code": 0}},
+            }
+            response = handle_action({"session_id": "workflow-test", "action": "workflow_network"})
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["events"][0]["type"], "workflow_summary")
+        self.assertEqual(load_memory()["audit"][-1]["kind"], "workflow")
+
+    def test_blank_llm_parameters_mean_server_defaults(self) -> None:
+        self.assertIsNone(_optional_int_payload({"max_tokens": None}, "max_tokens", 4096))
+        self.assertIsNone(_optional_float_payload({"temperature": ""}, "temperature", 0.2))
+
 
 class StaticConfigurationTests(unittest.TestCase):
     def test_docker_defaults_bind_privileged_gui_to_localhost(self) -> None:
@@ -248,6 +282,37 @@ class StaticConfigurationTests(unittest.TestCase):
         self.assertIn("function applyParameterDefaults(defaults)", html)
         self.assertIn("loadModelDefaults(id);", html)
         self.assertIn('min="-1"', html)
+
+    def test_index_embeds_local_auth_token_placeholder_replacement(self) -> None:
+        html = _index_asset().decode("utf-8")
+
+        self.assertIn(auth_token(), html)
+        self.assertNotIn("__LTA_AUTH_TOKEN__", html)
+
+    def test_post_auth_checks_require_local_token_and_trusted_origin(self) -> None:
+        handler = object.__new__(Handler)
+        token = auth_token()
+        handler.headers = {"X-LTA-Token": token, "Host": "127.0.0.1:28765"}
+        self.assertTrue(Handler._authorized(handler))
+        self.assertTrue(Handler._trusted_origin(handler))
+
+        handler.headers = {
+            "X-LTA-Token": "wrong",
+            "Host": "127.0.0.1:28765",
+            "Origin": "http://evil.local",
+        }
+        self.assertFalse(Handler._authorized(handler))
+        self.assertFalse(Handler._trusted_origin(handler))
+
+    def test_ui_has_workflow_issue_dashboard_and_approval_plan(self) -> None:
+        html = Path("src/linux_troubleshoot_agent/web_assets/index.html").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('id="issueDashboard"', html)
+        self.assertIn('data-workflow="network"', html)
+        self.assertIn("function renderPlan(plan)", html)
+        self.assertIn("runWorkflow(button.dataset.workflow)", html)
 
 
 if __name__ == "__main__":

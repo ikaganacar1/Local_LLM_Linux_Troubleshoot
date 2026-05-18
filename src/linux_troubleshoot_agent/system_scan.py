@@ -28,7 +28,57 @@ BASE_SCAN_COMMANDS = [
     ScanCommand("routes", "ip route"),
     ScanCommand("gpu", "lspci -k"),
     ScanCommand("audio", "pactl info"),
+    ScanCommand("hostname", "hostnamectl"),
+    ScanCommand("network_manager", "systemctl is-active NetworkManager"),
 ]
+
+WORKFLOWS: dict[str, list[ScanCommand]] = {
+    "display": [
+        ScanCommand("gpu", "lspci -k"),
+        ScanCommand("drm_journal", "journalctl -b --no-pager -n 120"),
+        ScanCommand("monitors_x11", "xrandr"),
+        ScanCommand("monitors_kde", "kscreen-doctor -o"),
+        ScanCommand("monitors_hyprland", "hyprctl monitors"),
+    ],
+    "audio": [
+        ScanCommand("pipewire", "systemctl --user status pipewire --no-pager"),
+        ScanCommand("wireplumber", "systemctl --user status wireplumber --no-pager"),
+        ScanCommand("pactl", "pactl info"),
+        ScanCommand("sinks", "pactl list short sinks"),
+        ScanCommand("wpctl", "wpctl status"),
+    ],
+    "network": [
+        ScanCommand("addresses", "ip -brief addr"),
+        ScanCommand("routes", "ip route"),
+        ScanCommand("network_manager", "nmcli device status"),
+        ScanCommand("network_journal", "journalctl -u NetworkManager -b --no-pager -n 120"),
+    ],
+    "services": [
+        ScanCommand("failed_services", "systemctl --failed --no-pager"),
+        ScanCommand("journal_errors", "journalctl -p 3 -xb --no-pager -n 120"),
+        ScanCommand("timers", "systemctl list-timers --no-pager"),
+    ],
+    "packages": [
+        ScanCommand("package_integrity_pacman", "pacman -Qk"),
+        ScanCommand("updates_pacman", "pacman -Qu"),
+        ScanCommand("updates_apt", "apt list --upgradable"),
+    ],
+    "boot": [
+        ScanCommand("kernel", "uname -a"),
+        ScanCommand("boot_errors", "journalctl -b -p warning --no-pager -n 160"),
+        ScanCommand("boot_time", "systemd-analyze"),
+    ],
+    "storage": [
+        ScanCommand("disk_space", "df -hT"),
+        ScanCommand("block_devices", "lsblk -o NAME,SIZE,FSTYPE,TYPE,MOUNTPOINTS"),
+        ScanCommand("mounts", "findmnt"),
+    ],
+    "bluetooth": [
+        ScanCommand("bluetooth_service", "systemctl status bluetooth --no-pager"),
+        ScanCommand("bluetooth_journal", "journalctl -u bluetooth -b --no-pager -n 120"),
+        ScanCommand("usb", "lsusb"),
+    ],
+}
 
 
 def run_system_scan(timeout_seconds: int = 30) -> dict[str, Any]:
@@ -47,10 +97,27 @@ def run_system_scan(timeout_seconds: int = 30) -> dict[str, Any]:
     return {"summary": summary, "results": results}
 
 
+def run_workflow_scan(workflow: str, timeout_seconds: int = 30) -> dict[str, Any]:
+    commands = WORKFLOWS.get(workflow)
+    if not commands:
+        return {"summary": {"workflow": workflow, "issues": []}, "results": {}}
+
+    results: dict[str, dict[str, Any]] = {}
+    for item in commands:
+        result = run_command(item.command, min(timeout_seconds, item.timeout))
+        results[item.name] = _result_dict(result)
+
+    package_manager = detect_package_manager()
+    summary = summarize_scan(results, package_manager)
+    summary["workflow"] = workflow
+    return {"summary": summary, "results": results}
+
+
 def summarize_scan(results: dict[str, dict[str, Any]], package_manager: str | None) -> dict[str, Any]:
     os_info = parse_os_release(results.get("os_release", {}).get("stdout", ""))
     kernel = first_line(results.get("kernel", {}).get("stdout", ""))
     issues = detect_issues(results, package_manager)
+    profile = infer_profile(results, issues, package_manager)
     return {
         "os_id": os_info.get("ID"),
         "os_name": os_info.get("PRETTY_NAME") or os_info.get("NAME"),
@@ -58,6 +125,7 @@ def summarize_scan(results: dict[str, dict[str, Any]], package_manager: str | No
         "kernel": kernel,
         "package_manager": package_manager,
         "issues": issues,
+        **profile,
     }
 
 
@@ -159,6 +227,9 @@ def detect_issues(results: dict[str, dict[str, Any]], package_manager: str | Non
             }
         )
 
+    for issue in package_issues(results, package_manager):
+        issues.append(issue)
+
     if results.get("network", {}).get("exit_code") != 0:
         issues.append(
             {
@@ -169,6 +240,72 @@ def detect_issues(results: dict[str, dict[str, Any]], package_manager: str | Non
             }
         )
 
+    return issues
+
+
+def infer_profile(
+    results: dict[str, dict[str, Any]],
+    issues: list[dict[str, str]],
+    package_manager: str | None,
+) -> dict[str, Any]:
+    hostname = results.get("hostname", {}).get("stdout", "")
+    gpu = first_matching_line(results.get("gpu", {}).get("stdout", ""), ("VGA", "3D", "Display"))
+    audio = results.get("audio", {}).get("stdout", "")
+    network_manager = results.get("network_manager", {}).get("stdout", "").strip()
+    update_result = results.get("updates", {})
+    return {
+        "session_type": _extract_hostnamectl(hostname, "Operating System") or None,
+        "desktop": os.environ.get("XDG_CURRENT_DESKTOP") or os.environ.get("DESKTOP_SESSION"),
+        "gpu": gpu,
+        "audio_server": first_line(audio),
+        "network_manager": network_manager or None,
+        "failed_services": _failed_service_names(results.get("failed_services", {}).get("stdout", "")),
+        "update_count": count_updates(
+            package_manager,
+            update_result.get("stdout", ""),
+            update_result.get("exit_code", 0),
+        )
+        if update_result
+        else 0,
+    }
+
+
+def package_issues(results: dict[str, dict[str, Any]], package_manager: str | None) -> list[dict[str, str]]:
+    issues: list[dict[str, str]] = []
+    if package_manager == "pacman":
+        integrity = results.get("package_integrity_pacman", {})
+        stdout = integrity.get("stdout", "")
+        broken = [line for line in stdout.splitlines() if "0 missing files" not in line and "backup file" not in line]
+        if integrity.get("exit_code") not in (None, 0) or broken:
+            issues.append(
+                {
+                    "severity": "medium",
+                    "title": "Pacman package integrity warnings",
+                    "detail": trim("\n".join(broken) or integrity.get("stderr", ""), 900),
+                    "next_step": "Inspect affected packages with pacman -Qk before reinstalling anything.",
+                }
+            )
+    if package_manager == "apt":
+        updates = results.get("updates") or results.get("updates_apt", {})
+        stderr = updates.get("stderr", "")
+        if "NO_PUBKEY" in stderr or "EXPKEYSIG" in stderr:
+            issues.append(
+                {
+                    "severity": "high",
+                    "title": "APT repository signature problem",
+                    "detail": trim(stderr, 900),
+                    "next_step": "Fix repository signing keys before applying updates.",
+                }
+            )
+        if "Could not get lock" in stderr:
+            issues.append(
+                {
+                    "severity": "medium",
+                    "title": "APT lock is held",
+                    "detail": trim(stderr, 700),
+                    "next_step": "Wait for the active package process to finish before retrying.",
+                }
+            )
     return issues
 
 
@@ -193,6 +330,31 @@ def parse_os_release(text: str) -> dict[str, str]:
 
 def first_line(text: str) -> str:
     return next((line.strip() for line in text.splitlines() if line.strip()), "")
+
+
+def first_matching_line(text: str, needles: tuple[str, ...]) -> str:
+    for line in text.splitlines():
+        if any(needle in line for needle in needles):
+            return line.strip()
+    return ""
+
+
+def _extract_hostnamectl(text: str, key: str) -> str:
+    prefix = f"{key}:"
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(prefix):
+            return stripped.split(":", 1)[1].strip()
+    return ""
+
+
+def _failed_service_names(text: str) -> list[str]:
+    names: list[str] = []
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0].endswith(".service"):
+            names.append(parts[0])
+    return names[:20]
 
 
 def trim(text: str, max_chars: int) -> str:
