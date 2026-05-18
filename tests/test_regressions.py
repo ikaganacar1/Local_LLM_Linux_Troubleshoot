@@ -13,6 +13,7 @@ from unittest.mock import patch
 from linux_troubleshoot_agent.safety import SafetyDecision, classify_command
 from linux_troubleshoot_agent.shell import run_command
 from linux_troubleshoot_agent.storage import PermissionSettings, auth_token, load_memory, save_settings
+from linux_troubleshoot_agent.system_scan import summarize_scan
 from linux_troubleshoot_agent.web import (
     Handler,
     SESSIONS,
@@ -88,6 +89,18 @@ class SafetyRegressionTests(unittest.TestCase):
 
         self.assertNotEqual(result.exit_code, 0)
         self.assertFalse(marker.exists())
+
+    def test_missing_executable_is_command_failure_not_crash(self) -> None:
+        result = run_command("definitely-not-installed-lta-command --version", 5)
+
+        self.assertEqual(result.exit_code, 127)
+        self.assertIn("definitely-not-installed-lta-command", result.stderr)
+
+    def test_redirection_is_rejected_by_command_runner(self) -> None:
+        result = run_command("echo value > /tmp/lta-redirect-test", 5)
+
+        self.assertEqual(result.exit_code, 127)
+        self.assertIn("redirection", result.stderr.lower())
 
     def test_module_preserves_forbidden_exit_code(self) -> None:
         completed = subprocess.run(
@@ -250,6 +263,22 @@ class WebRegressionTests(unittest.TestCase):
     def test_blank_llm_parameters_mean_server_defaults(self) -> None:
         self.assertIsNone(_optional_int_payload({"max_tokens": None}, "max_tokens", 4096))
         self.assertIsNone(_optional_float_payload({"temperature": ""}, "temperature", 0.2))
+
+    def test_packages_workflow_reports_updates_from_workflow_key(self) -> None:
+        summary = summarize_scan(
+            {
+                "updates_apt": {
+                    "stdout": "Listing...\nvim/now 2:9.1 amd64 [upgradable]\n",
+                    "stderr": "",
+                    "exit_code": 0,
+                }
+            },
+            "apt",
+        )
+
+        titles = [issue["title"] for issue in summary["issues"]]
+        self.assertIn("Package updates available", titles)
+        self.assertEqual(summary["update_count"], 1)
 
 
 class StaticConfigurationTests(unittest.TestCase):

@@ -215,7 +215,7 @@ def detect_issues(results: dict[str, dict[str, Any]], package_manager: str | Non
             }
         )
 
-    updates = results.get("updates", {})
+    updates = update_result_for(results, package_manager)
     update_count = count_updates(package_manager, updates.get("stdout", ""), updates.get("exit_code", 0))
     if update_count > 0:
         issues.append(
@@ -252,7 +252,7 @@ def infer_profile(
     gpu = first_matching_line(results.get("gpu", {}).get("stdout", ""), ("VGA", "3D", "Display"))
     audio = results.get("audio", {}).get("stdout", "")
     network_manager = results.get("network_manager", {}).get("stdout", "").strip()
-    update_result = results.get("updates", {})
+    update_result = update_result_for(results, package_manager)
     return {
         "session_type": _extract_hostnamectl(hostname, "Operating System") or None,
         "desktop": os.environ.get("XDG_CURRENT_DESKTOP") or os.environ.get("DESKTOP_SESSION"),
@@ -286,7 +286,7 @@ def package_issues(results: dict[str, dict[str, Any]], package_manager: str | No
                 }
             )
     if package_manager == "apt":
-        updates = results.get("updates") or results.get("updates_apt", {})
+        updates = update_result_for(results, package_manager)
         stderr = updates.get("stderr", "")
         if "NO_PUBKEY" in stderr or "EXPKEYSIG" in stderr:
             issues.append(
@@ -307,6 +307,15 @@ def package_issues(results: dict[str, dict[str, Any]], package_manager: str | No
                 }
             )
     return issues
+
+
+def update_result_for(results: dict[str, dict[str, Any]], package_manager: str | None) -> dict[str, Any]:
+    if results.get("updates"):
+        return results["updates"]
+    workflow_key = f"updates_{package_manager}" if package_manager else ""
+    if workflow_key and results.get(workflow_key):
+        return results[workflow_key]
+    return {}
 
 
 def count_updates(package_manager: str | None, stdout: str, exit_code: int) -> int:

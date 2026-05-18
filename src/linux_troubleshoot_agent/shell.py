@@ -100,6 +100,8 @@ def _parse_command(command: str) -> list[tuple[str, list[list[str]]]]:
             if not pipeline[-1]:
                 raise ValueError("Invalid empty pipeline segment.")
             pipeline.append([])
+        elif _looks_like_redirection(token):
+            raise ValueError(f"Shell redirection is not supported by the safe command runner: {token}")
         elif any(ch in token for ch in "|&;"):
             raise ValueError(f"Unsupported shell operator syntax: {token}")
         else:
@@ -124,18 +126,32 @@ def _shell_tokens(command: str) -> list[str]:
     return list(lexer)
 
 
+def _looks_like_redirection(token: str) -> bool:
+    if "<" in token or ">" in token:
+        return True
+    return len(token) >= 2 and token[:-1].isdigit() and token[-1] in {"<", ">"}
+
+
 def _run_pipeline(pipeline: list[list[str]], timeout_seconds: int) -> tuple[int, str, str]:
     processes: list[subprocess.Popen[str]] = []
     previous_stdout = None
     for segment in pipeline:
         argv = _host_command_argv(segment)
-        process = subprocess.Popen(
-            argv,
-            stdin=previous_stdout,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
+        try:
+            process = subprocess.Popen(
+                argv,
+                stdin=previous_stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        except OSError as exc:
+            if previous_stdout is not None:
+                previous_stdout.close()
+            for running in processes:
+                running.kill()
+                running.communicate()
+            return 127, "", f"{segment[0]}: {exc.strerror or str(exc)}"
         if previous_stdout is not None:
             previous_stdout.close()
         previous_stdout = process.stdout
