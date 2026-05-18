@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "linux-troubleshoot-agent"
+version = "0.1.0"
+description = "Safe local Linux troubleshooting agent backed by a llama.cpp OpenAI-compatible server."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+linux-troubleshoot-agent = "linux_troubleshoot_agent.cli:main"
+linux-troubleshoot-agent-gui = "linux_troubleshoot_agent.web:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+linux_troubleshoot_agent = ["default_system_prompt.txt", "web_assets/*"]

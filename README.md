@@ -1,0 +1,81 @@
+# Local Linux Troubleshooting Agent
+
+A safe local Linux troubleshooting agent focused on Arch Linux and similar systems. It uses a ready llama.cpp OpenAI-compatible server for the model and runs local diagnostic commands through a safety controller.
+
+## Files
+
+- `prompts/system_prompt.txt`: Full system prompt for the agent runtime.
+- `prompts/description.txt`: Short agent description for UI, metadata, or config summaries.
+- `src/linux_troubleshoot_agent/`: Python agent, llama.cpp client, command safety checks, CLI, and browser GUI.
+
+## GUI
+
+Run the browser UI:
+
+```bash
+python -m linux_troubleshoot_agent.web
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8765/
+```
+
+The llama.cpp base URL defaults to:
+
+```text
+http://127.0.0.1:11435/v1
+```
+
+You can also set defaults before launching:
+
+```bash
+export LLAMA_CPP_BASE_URL=http://127.0.0.1:11435/v1
+export LLAMA_CPP_MODEL=local-model
+python -m linux_troubleshoot_agent.web
+```
+
+## Automatic Maintenance
+
+The GUI includes buttons for:
+
+- `Scan System`: read-only scan for OS, kernel, failed services, journal errors, disk space, network, GPU/audio basics, and available updates.
+- `Check Updates`: distro-aware read-only package update check.
+- `Apply Updates`: runs the detected package manager update command when package update permission is enabled.
+- `Plan Folders`: previews moves from `~/Downloads` and `~/Desktop` into `~/Organized` by file type.
+- `Organize`: applies the folder plan when personal folder organization permission is enabled.
+
+The agent stores local memory in `.lta_data/` by default. Set `LTA_DATA_DIR` to use a different location.
+
+For commands that use `sudo`, launch the GUI from a terminal so password prompts are visible if your sudo session is not already authenticated.
+
+## CLI
+
+Run the terminal agent:
+
+```bash
+python -m linux_troubleshoot_agent "HDMI monitor is not detected"
+```
+
+Check how a command will be classified:
+
+```bash
+python -m linux_troubleshoot_agent --check-command "journalctl -p 3 -xb"
+```
+
+## Safety Model
+
+The agent should run read-only diagnostic commands first, explain what it is checking, rank likely causes from evidence, and ask before making system changes.
+
+It must ask before installing or removing packages, editing configs, modifying services, killing processes, rebooting, or running destructive commands.
+
+## Suggested Agent Config Shape
+
+```json
+{
+  "name": "Local Linux Troubleshooting Agent",
+  "description_file": "prompts/description.txt",
+  "system_prompt_file": "prompts/system_prompt.txt"
+}
+```

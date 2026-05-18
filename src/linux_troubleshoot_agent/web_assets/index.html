@@ -1,0 +1,570 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Linux Troubleshooting Agent</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6f8;
+      --panel: #ffffff;
+      --line: #d7dde6;
+      --text: #17202c;
+      --muted: #627084;
+      --blue: #1d4ed8;
+      --green: #047857;
+      --red: #b42318;
+      --amber: #a15c07;
+      --code: #101828;
+      --soft: #eef2f7;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .app {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 340px 1fr;
+    }
+    aside {
+      background: var(--panel);
+      border-right: 1px solid var(--line);
+      padding: 16px;
+      overflow: auto;
+    }
+    main {
+      min-width: 0;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+    }
+    header {
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+      padding: 14px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 750;
+      letter-spacing: 0;
+    }
+    h2 {
+      margin: 18px 0 8px;
+      font-size: 13px;
+      text-transform: uppercase;
+      color: var(--muted);
+      letter-spacing: 0;
+    }
+    .stack {
+      display: grid;
+      gap: 10px;
+    }
+    label {
+      display: grid;
+      gap: 5px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .check {
+      grid-template-columns: 18px 1fr;
+      align-items: start;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 600;
+    }
+    input, textarea, button {
+      font: inherit;
+    }
+    input[type="text"], textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      padding: 9px 10px;
+      outline: none;
+    }
+    input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      margin-top: 2px;
+      accent-color: var(--blue);
+    }
+    input:focus, textarea:focus {
+      border-color: var(--blue);
+      box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.12);
+    }
+    button {
+      border: 1px solid transparent;
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-weight: 750;
+      cursor: pointer;
+      min-height: 40px;
+    }
+    button.primary { background: var(--blue); color: #fff; }
+    button.secondary { background: #fff; border-color: var(--line); color: var(--text); }
+    button.danger { background: var(--red); color: #fff; }
+    button:disabled { cursor: not-allowed; opacity: 0.58; }
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .status {
+      padding: 8px 10px;
+      background: var(--soft);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--muted);
+      min-height: 38px;
+      word-break: break-word;
+    }
+    .workspace {
+      padding: 18px;
+      overflow: auto;
+    }
+    .log {
+      max-width: 1120px;
+      margin: 0 auto;
+      display: grid;
+      gap: 12px;
+    }
+    .entry {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+    }
+    .entry.user { border-left: 4px solid var(--blue); }
+    .entry.agent { border-left: 4px solid var(--green); }
+    .entry.warn { border-left: 4px solid var(--amber); }
+    .entry.blocked { border-left: 4px solid var(--red); }
+    .meta {
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+      text-transform: uppercase;
+    }
+    .issue-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .issue {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px;
+      background: #fbfcfe;
+    }
+    .issue strong {
+      display: block;
+      margin-bottom: 4px;
+    }
+    pre {
+      margin: 8px 0 0;
+      padding: 10px;
+      border-radius: 6px;
+      background: var(--code);
+      color: #eef2f7;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 360px;
+    }
+    footer {
+      background: var(--panel);
+      border-top: 1px solid var(--line);
+      padding: 12px 18px;
+    }
+    .composer {
+      max-width: 1120px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: end;
+    }
+    textarea {
+      min-height: 52px;
+      max-height: 160px;
+      resize: vertical;
+    }
+    .approval-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+    .empty {
+      color: var(--muted);
+      text-align: center;
+      padding: 32px 12px;
+    }
+    @media (max-width: 900px) {
+      .app { grid-template-columns: 1fr; }
+      aside { border-right: 0; border-bottom: 1px solid var(--line); }
+      .actions, .composer { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside>
+      <h1>Linux Troubleshooting Agent</h1>
+
+      <h2>Model</h2>
+      <div class="stack">
+        <label>
+          llama.cpp base URL
+          <input id="baseUrl" type="text" value="http://127.0.0.1:11435/v1" spellcheck="false">
+        </label>
+        <label>
+          model
+          <input id="model" type="text" value="local-model" spellcheck="false">
+        </label>
+      </div>
+
+      <h2>Permissions</h2>
+      <div class="stack">
+        <label class="check"><input id="autoRunReadonly" type="checkbox"><span>Auto-run read-only scans</span></label>
+        <label class="check"><input id="allowUpdates" type="checkbox"><span>Allow package updates</span></label>
+        <label class="check"><input id="allowServices" type="checkbox"><span>Allow service changes</span></label>
+        <label class="check"><input id="allowOrganize" type="checkbox"><span>Allow personal folder organization</span></label>
+        <label class="check"><input id="requireConfirm" type="checkbox"><span>Confirm modifying actions</span></label>
+        <button id="saveSettings" class="secondary" type="button">Save Permissions</button>
+      </div>
+
+      <h2>Automatic Actions</h2>
+      <div class="actions">
+        <button id="scan" class="primary" type="button">Scan System</button>
+        <button id="checkUpdates" class="secondary" type="button">Check Updates</button>
+        <button id="applyUpdates" class="secondary" type="button">Apply Updates</button>
+        <button id="previewOrganize" class="secondary" type="button">Plan Folders</button>
+        <button id="applyOrganize" class="secondary" type="button">Organize</button>
+      </div>
+
+      <h2>Memory</h2>
+      <div id="memory" class="status">Loading</div>
+    </aside>
+
+    <main>
+      <header>
+        <div id="status" class="status">Ready</div>
+      </header>
+      <div class="workspace">
+        <div id="log" class="log">
+          <div class="empty">Run a scan or describe a problem.</div>
+        </div>
+      </div>
+      <footer>
+        <form id="composer" class="composer">
+          <textarea id="message" placeholder="Example: HDMI monitor is not detected on KDE Wayland"></textarea>
+          <button id="send" class="primary" type="submit">Send</button>
+        </form>
+      </footer>
+    </main>
+  </div>
+
+  <script>
+    const log = document.querySelector("#log");
+    const form = document.querySelector("#composer");
+    const message = document.querySelector("#message");
+    const send = document.querySelector("#send");
+    const baseUrl = document.querySelector("#baseUrl");
+    const model = document.querySelector("#model");
+    const statusBox = document.querySelector("#status");
+    const memoryBox = document.querySelector("#memory");
+    const fields = {
+      auto_run_readonly_scan: document.querySelector("#autoRunReadonly"),
+      allow_package_updates: document.querySelector("#allowUpdates"),
+      allow_service_changes: document.querySelector("#allowServices"),
+      allow_personal_folder_organize: document.querySelector("#allowOrganize"),
+      require_confirmation_for_modifying: document.querySelector("#requireConfirm")
+    };
+    let sessionId = null;
+    let busy = false;
+
+    function setBusy(value, text) {
+      busy = value;
+      send.disabled = value;
+      for (const button of document.querySelectorAll("button")) button.disabled = value;
+      statusBox.textContent = value ? (text || "Working") : "Ready";
+    }
+
+    function clearEmpty() {
+      const empty = log.querySelector(".empty");
+      if (empty) empty.remove();
+    }
+
+    function addEntry(kind, title, body, extra) {
+      clearEmpty();
+      const entry = document.createElement("div");
+      entry.className = `entry ${kind}`;
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = title;
+      entry.appendChild(meta);
+      if (body) {
+        const text = document.createElement("div");
+        text.textContent = body;
+        entry.appendChild(text);
+      }
+      if (extra) entry.appendChild(extra);
+      log.appendChild(entry);
+      entry.scrollIntoView({ block: "end", behavior: "smooth" });
+      return entry;
+    }
+
+    function codeBlock(text) {
+      const pre = document.createElement("pre");
+      pre.textContent = text || "(empty)";
+      return pre;
+    }
+
+    async function get(path) {
+      const response = await fetch(path);
+      return response.json();
+    }
+
+    async function post(path, payload) {
+      const response = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      return response.json();
+    }
+
+    function basePayload(extra = {}) {
+      return {
+        session_id: sessionId,
+        base_url: baseUrl.value.trim(),
+        model: model.value.trim(),
+        ...extra
+      };
+    }
+
+    async function loadState() {
+      const data = await get("/api/state");
+      if (!data.ok) return;
+      applySettings(data.settings || {});
+      renderMemory(data.memory || {});
+    }
+
+    function collectSettings() {
+      const settings = {};
+      for (const [key, field] of Object.entries(fields)) settings[key] = field.checked;
+      return settings;
+    }
+
+    function applySettings(settings) {
+      for (const [key, field] of Object.entries(fields)) field.checked = Boolean(settings[key]);
+    }
+
+    function renderMemory(memory) {
+      const facts = memory.facts || {};
+      const scans = memory.scan_history || [];
+      memoryBox.textContent = [
+        facts.os_name || "Unknown OS",
+        facts.package_manager ? `packages: ${facts.package_manager}` : "packages: unknown",
+        scans.length ? `scans: ${scans.length}` : "scans: 0"
+      ].join("\n");
+    }
+
+    async function saveSettings() {
+      setBusy(true, "Saving permissions");
+      try {
+        const data = await post("/api/settings", { settings: collectSettings() });
+        if (!data.ok) throw new Error(data.error || "Save failed");
+        applySettings(data.settings);
+        renderMemory(data.memory || {});
+        addEntry("agent", "Permissions Saved", "Updated local permission settings.");
+      } catch (error) {
+        addEntry("blocked", "Error", String(error.message || error));
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function sendMessage(text) {
+      setBusy(true, "Thinking");
+      addEntry("user", "User", text);
+      try {
+        const data = await post("/api/message", basePayload({ message: text }));
+        handleResponse(data);
+      } catch (error) {
+        addEntry("blocked", "Error", String(error.message || error));
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function runScan() {
+      setBusy(true, "Scanning system");
+      try {
+        const data = await post("/api/scan", basePayload());
+        handleResponse(data);
+        if (data.memory) renderMemory(data.memory);
+      } catch (error) {
+        addEntry("blocked", "Error", String(error.message || error));
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function runAction(action, confirmed = false) {
+      setBusy(true, "Running action");
+      try {
+        const data = await post("/api/action", basePayload({ action, confirmed }));
+        handleResponse(data);
+      } catch (error) {
+        addEntry("blocked", "Error", String(error.message || error));
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    function handleResponse(data) {
+      if (!data.ok) {
+        addEntry("blocked", "Error", data.error || "Request failed.");
+        return;
+      }
+      sessionId = data.session_id || sessionId;
+      for (const event of data.events || []) renderEvent(event);
+    }
+
+    function renderEvent(event) {
+      if (event.type === "message") {
+        addEntry("agent", "Agent", event.content);
+      } else if (event.type === "scan_summary") {
+        renderScanSummary(event.summary, event.results);
+      } else if (event.type === "proposed_command") {
+        const wrap = document.createElement("div");
+        const reason = document.createElement("div");
+        reason.textContent = event.reason || "Diagnostic command";
+        wrap.appendChild(reason);
+        wrap.appendChild(codeBlock(event.command));
+        addEntry("warn", "Command", "", wrap);
+      } else if (event.type === "command_result") {
+        const wrap = document.createElement("div");
+        wrap.appendChild(codeBlock(`exit code: ${event.exit_code}\n\nSTDOUT:\n${event.stdout || "(empty)"}\n\nSTDERR:\n${event.stderr || "(empty)"}`));
+        addEntry(event.exit_code === 0 ? "agent" : "warn", "Command Result", event.command, wrap);
+      } else if (event.type === "approval_required") {
+        renderApproval(event.reason, event.command, approveCommand);
+      } else if (event.type === "action_confirmation") {
+        renderApproval(event.reason, event.command, (approved) => runAction(event.action, approved));
+      } else if (event.type === "organize_plan") {
+        renderOrganizePlan(event.plan);
+      } else if (event.type === "organize_result") {
+        const result = event.result || {};
+        addEntry("agent", "Organization Result", `Moved ${result.applied?.length || 0} files. Skipped ${result.skipped?.length || 0}.`, codeBlock(JSON.stringify(result, null, 2)));
+      } else if (event.type === "blocked") {
+        addEntry("blocked", "Blocked", event.content);
+      } else {
+        addEntry("warn", "Notice", event.content || JSON.stringify(event));
+      }
+    }
+
+    function renderScanSummary(summary, results) {
+      const wrap = document.createElement("div");
+      const top = document.createElement("div");
+      top.textContent = `${summary.os_name || "Unknown OS"} | ${summary.package_manager || "no package manager"} | ${summary.kernel || "unknown kernel"}`;
+      wrap.appendChild(top);
+      const issues = document.createElement("div");
+      issues.className = "issue-list";
+      for (const issue of summary.issues || []) {
+        const row = document.createElement("div");
+        row.className = "issue";
+        const title = document.createElement("strong");
+        title.textContent = `${issue.severity}: ${issue.title}`;
+        const detail = document.createElement("div");
+        detail.textContent = issue.detail || "";
+        const next = document.createElement("div");
+        next.textContent = issue.next_step || "";
+        row.append(title, detail, next);
+        issues.appendChild(row);
+      }
+      if (!(summary.issues || []).length) {
+        const row = document.createElement("div");
+        row.className = "issue";
+        row.textContent = "No obvious high-level issues detected by the deterministic scan.";
+        issues.appendChild(row);
+      }
+      wrap.appendChild(issues);
+      wrap.appendChild(codeBlock(JSON.stringify(results, null, 2)));
+      addEntry("agent", "System Scan", "", wrap);
+    }
+
+    function renderOrganizePlan(plan) {
+      const moves = plan.moves || [];
+      const shown = moves.slice(0, 30);
+      const body = `Planned moves: ${plan.move_count || 0}. Showing ${shown.length}.`;
+      addEntry("agent", "Folder Plan", body, codeBlock(JSON.stringify(shown, null, 2)));
+    }
+
+    function renderApproval(reason, command, callback) {
+      const wrap = document.createElement("div");
+      const reasonEl = document.createElement("div");
+      reasonEl.textContent = reason || "Approval required";
+      wrap.appendChild(reasonEl);
+      wrap.appendChild(codeBlock(command));
+      const actions = document.createElement("div");
+      actions.className = "approval-actions";
+      const run = document.createElement("button");
+      run.className = "danger";
+      run.type = "button";
+      run.textContent = "Run";
+      const skip = document.createElement("button");
+      skip.className = "secondary";
+      skip.type = "button";
+      skip.textContent = "Skip";
+      actions.append(run, skip);
+      wrap.appendChild(actions);
+      addEntry("warn", "Confirmation", "", wrap);
+      run.addEventListener("click", () => callback(true));
+      skip.addEventListener("click", () => callback(false));
+    }
+
+    async function approveCommand(approved) {
+      setBusy(true, approved ? "Running command" : "Skipping");
+      try {
+        const data = await post("/api/approve", { session_id: sessionId, approved });
+        handleResponse(data);
+      } catch (error) {
+        addEntry("blocked", "Error", String(error.message || error));
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (busy) return;
+      const text = message.value.trim();
+      if (!text) return;
+      message.value = "";
+      sendMessage(text);
+    });
+
+    document.querySelector("#saveSettings").addEventListener("click", saveSettings);
+    document.querySelector("#scan").addEventListener("click", runScan);
+    document.querySelector("#checkUpdates").addEventListener("click", () => runAction("check_updates"));
+    document.querySelector("#applyUpdates").addEventListener("click", () => runAction("apply_updates"));
+    document.querySelector("#previewOrganize").addEventListener("click", () => runAction("organize_preview"));
+    document.querySelector("#applyOrganize").addEventListener("click", () => runAction("organize_apply"));
+    loadState().catch((error) => addEntry("blocked", "Error", String(error.message || error)));
+  </script>
+</body>
+</html>
