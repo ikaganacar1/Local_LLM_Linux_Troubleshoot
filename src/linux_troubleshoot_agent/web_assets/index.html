@@ -1,40 +1,67 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Linux Troubleshooting Agent</title>
   <style>
     :root {
+      color-scheme: dark;
+      --bg: #080b10;
+      --panel: #111722;
+      --panel-2: #151d2a;
+      --panel-3: #1b2534;
+      --line: #2a3548;
+      --text: #edf2f7;
+      --muted: #94a3b8;
+      --faint: #64748b;
+      --blue: #60a5fa;
+      --blue-strong: #2563eb;
+      --green: #34d399;
+      --red: #fb7185;
+      --amber: #fbbf24;
+      --code: #05070b;
+      --shadow: 0 18px 40px rgba(0, 0, 0, 0.32);
+    }
+    [data-theme="light"] {
       color-scheme: light;
-      --bg: #f4f6f8;
+      --bg: #eef2f6;
       --panel: #ffffff;
+      --panel-2: #f8fafc;
+      --panel-3: #eef2f7;
       --line: #d7dde6;
-      --text: #17202c;
-      --muted: #627084;
-      --blue: #1d4ed8;
+      --text: #111827;
+      --muted: #5b687a;
+      --faint: #7c899c;
+      --blue: #2563eb;
+      --blue-strong: #1d4ed8;
       --green: #047857;
-      --red: #b42318;
+      --red: #be123c;
       --amber: #a15c07;
       --code: #101828;
-      --soft: #eef2f7;
+      --shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
+      min-height: 100vh;
       background: var(--bg);
       color: var(--text);
-      font: 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font: 14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+    button, input, textarea {
+      font: inherit;
     }
     .app {
       min-height: 100vh;
       display: grid;
-      grid-template-columns: 340px 1fr;
+      grid-template-columns: 360px 1fr;
     }
     aside {
-      background: var(--panel);
       border-right: 1px solid var(--line);
-      padding: 16px;
+      background: linear-gradient(180deg, var(--panel), var(--bg));
+      padding: 18px;
       overflow: auto;
     }
     main {
@@ -42,57 +69,90 @@
       display: grid;
       grid-template-rows: auto 1fr auto;
     }
-    header {
-      background: var(--panel);
-      border-bottom: 1px solid var(--line);
-      padding: 14px 18px;
+    .brand {
+      display: grid;
+      gap: 4px;
+      margin-bottom: 16px;
+    }
+    .brand-title {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 780;
+    }
+    .brand-subtitle {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    details.panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.02);
+      margin-bottom: 10px;
+      overflow: hidden;
+    }
+    details.panel > summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 12px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
+      gap: 10px;
+      color: var(--text);
+      font-weight: 760;
+      background: var(--panel-2);
+      border-bottom: 1px solid transparent;
     }
-    h1 {
-      margin: 0;
-      font-size: 18px;
-      font-weight: 750;
-      letter-spacing: 0;
+    details.panel[open] > summary {
+      border-bottom-color: var(--line);
     }
-    h2 {
-      margin: 18px 0 8px;
-      font-size: 13px;
-      text-transform: uppercase;
+    details.panel > summary::-webkit-details-marker {
+      display: none;
+    }
+    details.panel > summary::after {
+      content: "+";
       color: var(--muted);
-      letter-spacing: 0;
+      font-weight: 800;
     }
-    .stack {
+    details.panel[open] > summary::after {
+      content: "-";
+    }
+    .panel-body {
+      padding: 12px;
       display: grid;
       gap: 10px;
     }
     label {
       display: grid;
-      gap: 5px;
+      gap: 6px;
       color: var(--muted);
       font-size: 12px;
-      font-weight: 650;
+      font-weight: 680;
+    }
+    input[type="text"], textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel-3);
+      color: var(--text);
+      padding: 10px 11px;
+      outline: none;
+    }
+    textarea {
+      min-height: 54px;
+      max-height: 180px;
+      resize: vertical;
+    }
+    input:focus, textarea:focus {
+      border-color: var(--blue);
+      box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.16);
     }
     .check {
       grid-template-columns: 18px 1fr;
       align-items: start;
       color: var(--text);
       font-size: 13px;
-      font-weight: 600;
-    }
-    input, textarea, button {
-      font: inherit;
-    }
-    input[type="text"], textarea {
-      width: 100%;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: #fff;
-      color: var(--text);
-      padding: 9px 10px;
-      outline: none;
+      font-weight: 650;
     }
     input[type="checkbox"] {
       width: 16px;
@@ -100,42 +160,100 @@
       margin-top: 2px;
       accent-color: var(--blue);
     }
-    input:focus, textarea:focus {
-      border-color: var(--blue);
-      box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.12);
-    }
     button {
       border: 1px solid transparent;
-      border-radius: 6px;
+      border-radius: 7px;
       padding: 10px 12px;
+      min-height: 40px;
+      color: var(--text);
+      background: var(--panel-3);
       font-weight: 750;
       cursor: pointer;
-      min-height: 40px;
     }
-    button.primary { background: var(--blue); color: #fff; }
-    button.secondary { background: #fff; border-color: var(--line); color: var(--text); }
-    button.danger { background: var(--red); color: #fff; }
-    button:disabled { cursor: not-allowed; opacity: 0.58; }
-    .actions {
+    button:hover:not(:disabled) {
+      border-color: var(--blue);
+    }
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.56;
+    }
+    button.primary {
+      background: var(--blue-strong);
+      color: #fff;
+    }
+    button.secondary {
+      background: var(--panel-3);
+      border-color: var(--line);
+    }
+    button.danger {
+      background: var(--red);
+      color: #fff;
+    }
+    .button-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 8px;
     }
-    .status {
+    .model-list {
+      display: grid;
+      gap: 6px;
+      max-height: 210px;
+      overflow: auto;
+      padding-right: 2px;
+    }
+    .model-item {
+      text-align: left;
+      border-color: var(--line);
+      background: var(--panel-3);
+      min-height: 36px;
       padding: 8px 10px;
-      background: var(--soft);
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      color: var(--muted);
-      min-height: 38px;
       word-break: break-word;
     }
+    .model-item.active {
+      border-color: var(--blue);
+      box-shadow: inset 3px 0 0 var(--blue);
+    }
+    .small-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: end;
+    }
+    .memory-card, .status-pill {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-2);
+      color: var(--muted);
+      padding: 10px;
+      white-space: pre-line;
+      word-break: break-word;
+    }
+    header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(17, 23, 34, 0.86);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .top-title {
+      display: grid;
+      gap: 2px;
+    }
+    .top-title strong {
+      font-size: 15px;
+    }
+    .top-title span {
+      color: var(--muted);
+      font-size: 12px;
+    }
     .workspace {
-      padding: 18px;
+      padding: 20px;
       overflow: auto;
     }
     .log {
-      max-width: 1120px;
+      max-width: 1180px;
       margin: 0 auto;
       display: grid;
       gap: 12px;
@@ -144,62 +262,58 @@
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 8px;
-      padding: 12px;
+      padding: 13px;
+      box-shadow: var(--shadow);
     }
     .entry.user { border-left: 4px solid var(--blue); }
     .entry.agent { border-left: 4px solid var(--green); }
     .entry.warn { border-left: 4px solid var(--amber); }
     .entry.blocked { border-left: 4px solid var(--red); }
     .meta {
-      margin-bottom: 6px;
+      margin-bottom: 7px;
       color: var(--muted);
-      font-size: 12px;
-      font-weight: 750;
+      font-size: 11px;
+      font-weight: 800;
       text-transform: uppercase;
     }
     .issue-list {
       display: grid;
       gap: 8px;
-      margin-top: 8px;
+      margin-top: 10px;
     }
     .issue {
       border: 1px solid var(--line);
-      border-radius: 6px;
+      border-radius: 7px;
       padding: 10px;
-      background: #fbfcfe;
+      background: var(--panel-2);
     }
     .issue strong {
       display: block;
-      margin-bottom: 4px;
+      margin-bottom: 5px;
     }
     pre {
-      margin: 8px 0 0;
-      padding: 10px;
-      border-radius: 6px;
+      margin: 10px 0 0;
+      padding: 11px;
+      border-radius: 7px;
       background: var(--code);
-      color: #eef2f7;
+      color: #dbeafe;
       overflow: auto;
       white-space: pre-wrap;
       word-break: break-word;
-      max-height: 360px;
+      max-height: 380px;
     }
     footer {
-      background: var(--panel);
       border-top: 1px solid var(--line);
-      padding: 12px 18px;
+      background: var(--panel);
+      padding: 14px 20px;
     }
     .composer {
-      max-width: 1120px;
+      max-width: 1180px;
       margin: 0 auto;
       display: grid;
       grid-template-columns: 1fr auto;
       gap: 10px;
       align-items: end;
-    }
-    textarea {
-      min-height: 52px;
-      max-height: 160px;
-      resize: vertical;
     }
     .approval-actions {
       display: flex;
@@ -208,60 +322,96 @@
       flex-wrap: wrap;
     }
     .empty {
+      border: 1px dashed var(--line);
+      border-radius: 8px;
       color: var(--muted);
       text-align: center;
-      padding: 32px 12px;
+      padding: 36px 14px;
+      background: var(--panel);
     }
-    @media (max-width: 900px) {
+    @media (max-width: 940px) {
       .app { grid-template-columns: 1fr; }
       aside { border-right: 0; border-bottom: 1px solid var(--line); }
-      .actions, .composer { grid-template-columns: 1fr; }
+      .button-grid, .composer, .small-row { grid-template-columns: 1fr; }
+      header { align-items: flex-start; flex-direction: column; }
     }
   </style>
 </head>
 <body>
   <div class="app">
     <aside>
-      <h1>Linux Troubleshooting Agent</h1>
-
-      <h2>Model</h2>
-      <div class="stack">
-        <label>
-          llama.cpp base URL
-          <input id="baseUrl" type="text" value="http://127.0.0.1:11435/v1" spellcheck="false">
-        </label>
-        <label>
-          model
-          <input id="model" type="text" value="local-model" spellcheck="false">
-        </label>
+      <div class="brand">
+        <h1 class="brand-title">Linux Troubleshooting Agent</h1>
+        <div class="brand-subtitle">Local diagnostics and maintenance</div>
       </div>
 
-      <h2>Permissions</h2>
-      <div class="stack">
-        <label class="check"><input id="autoRunReadonly" type="checkbox"><span>Auto-run read-only scans</span></label>
-        <label class="check"><input id="allowUpdates" type="checkbox"><span>Allow package updates</span></label>
-        <label class="check"><input id="allowServices" type="checkbox"><span>Allow service changes</span></label>
-        <label class="check"><input id="allowOrganize" type="checkbox"><span>Allow personal folder organization</span></label>
-        <label class="check"><input id="requireConfirm" type="checkbox"><span>Confirm modifying actions</span></label>
-        <button id="saveSettings" class="secondary" type="button">Save Permissions</button>
-      </div>
+      <details class="panel" open>
+        <summary>Model</summary>
+        <div class="panel-body">
+          <label>
+            llama.cpp base URL
+            <input id="baseUrl" type="text" value="http://127.0.0.1:11435/v1" spellcheck="false">
+          </label>
+          <div class="small-row">
+            <label>
+              active model
+              <input id="model" type="text" value="local-model" spellcheck="false">
+            </label>
+            <button id="refreshModels" class="secondary" type="button">Refresh</button>
+          </div>
+          <div id="modelList" class="model-list">
+            <button class="model-item active" type="button" data-model="local-model">local-model</button>
+          </div>
+        </div>
+      </details>
 
-      <h2>Automatic Actions</h2>
-      <div class="actions">
-        <button id="scan" class="primary" type="button">Scan System</button>
-        <button id="checkUpdates" class="secondary" type="button">Check Updates</button>
-        <button id="applyUpdates" class="secondary" type="button">Apply Updates</button>
-        <button id="previewOrganize" class="secondary" type="button">Plan Folders</button>
-        <button id="applyOrganize" class="secondary" type="button">Organize</button>
-      </div>
+      <details class="panel" open>
+        <summary>Actions</summary>
+        <div class="panel-body">
+          <div class="button-grid">
+            <button id="scan" class="primary" type="button">Scan System</button>
+            <button id="checkUpdates" class="secondary" type="button">Check Updates</button>
+            <button id="applyUpdates" class="secondary" type="button">Apply Updates</button>
+            <button id="previewOrganize" class="secondary" type="button">Plan Folders</button>
+            <button id="applyOrganize" class="secondary" type="button">Organize</button>
+          </div>
+        </div>
+      </details>
 
-      <h2>Memory</h2>
-      <div id="memory" class="status">Loading</div>
+      <details class="panel">
+        <summary>Permissions</summary>
+        <div class="panel-body">
+          <label class="check"><input id="autoRunReadonly" type="checkbox"><span>Auto-run read-only scans</span></label>
+          <label class="check"><input id="allowUpdates" type="checkbox"><span>Allow package updates</span></label>
+          <label class="check"><input id="allowServices" type="checkbox"><span>Allow service changes</span></label>
+          <label class="check"><input id="allowOrganize" type="checkbox"><span>Allow personal folder organization</span></label>
+          <label class="check"><input id="requireConfirm" type="checkbox"><span>Confirm modifying actions</span></label>
+          <button id="saveSettings" class="secondary" type="button">Save Permissions</button>
+        </div>
+      </details>
+
+      <details class="panel">
+        <summary>Appearance</summary>
+        <div class="panel-body">
+          <label class="check"><input id="darkMode" type="checkbox"><span>Dark mode</span></label>
+        </div>
+      </details>
+
+      <details class="panel" open>
+        <summary>Memory</summary>
+        <div class="panel-body">
+          <div id="memory" class="memory-card">Loading</div>
+        </div>
+      </details>
     </aside>
 
     <main>
       <header>
-        <div id="status" class="status">Ready</div>
+        <div class="top-title">
+          <strong>System Console</strong>
+          <span>Read-only scans run automatically; modifying actions remain permission-gated.</span>
+        </div>
+        <div id="status" class="status-pill">Ready</div>
       </header>
       <div class="workspace">
         <div id="log" class="log">
@@ -284,8 +434,11 @@
     const send = document.querySelector("#send");
     const baseUrl = document.querySelector("#baseUrl");
     const model = document.querySelector("#model");
+    const modelList = document.querySelector("#modelList");
+    const refreshModels = document.querySelector("#refreshModels");
     const statusBox = document.querySelector("#status");
     const memoryBox = document.querySelector("#memory");
+    const darkMode = document.querySelector("#darkMode");
     const fields = {
       auto_run_readonly_scan: document.querySelector("#autoRunReadonly"),
       allow_package_updates: document.querySelector("#allowUpdates"),
@@ -356,11 +509,59 @@
       };
     }
 
+    function applyTheme(value) {
+      document.documentElement.dataset.theme = value;
+      darkMode.checked = value === "dark";
+      localStorage.setItem("lta-theme", value);
+    }
+
     async function loadState() {
       const data = await get("/api/state");
       if (!data.ok) return;
       applySettings(data.settings || {});
       renderMemory(data.memory || {});
+    }
+
+    async function loadModels() {
+      setBusy(true, "Loading models");
+      try {
+        const data = await post("/api/models", { base_url: baseUrl.value.trim() });
+        if (!data.ok) throw new Error(data.error || "Could not load models");
+        renderModels(data.models || []);
+      } catch (error) {
+        addEntry("blocked", "Model List", String(error.message || error));
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    function renderModels(models) {
+      modelList.textContent = "";
+      const ids = models.map((item) => item.id).filter(Boolean);
+      if (!ids.includes(model.value.trim())) ids.unshift(model.value.trim() || "local-model");
+      for (const id of ids) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "model-item";
+        button.dataset.model = id;
+        button.textContent = id;
+        button.addEventListener("click", () => selectModel(id));
+        modelList.appendChild(button);
+      }
+      markActiveModel();
+      addEntry("agent", "Models", ids.length ? `Loaded ${ids.length} model option(s).` : "No models returned.");
+    }
+
+    function selectModel(id) {
+      model.value = id;
+      markActiveModel();
+    }
+
+    function markActiveModel() {
+      const current = model.value.trim();
+      for (const item of modelList.querySelectorAll(".model-item")) {
+        item.classList.toggle("active", item.dataset.model === current);
+      }
     }
 
     function collectSettings() {
@@ -558,13 +759,19 @@
       sendMessage(text);
     });
 
+    model.addEventListener("input", markActiveModel);
+    refreshModels.addEventListener("click", loadModels);
+    darkMode.addEventListener("change", () => applyTheme(darkMode.checked ? "dark" : "light"));
     document.querySelector("#saveSettings").addEventListener("click", saveSettings);
     document.querySelector("#scan").addEventListener("click", runScan);
     document.querySelector("#checkUpdates").addEventListener("click", () => runAction("check_updates"));
     document.querySelector("#applyUpdates").addEventListener("click", () => runAction("apply_updates"));
     document.querySelector("#previewOrganize").addEventListener("click", () => runAction("organize_preview"));
     document.querySelector("#applyOrganize").addEventListener("click", () => runAction("organize_apply"));
+
+    applyTheme(localStorage.getItem("lta-theme") || "dark");
     loadState().catch((error) => addEntry("blocked", "Error", String(error.message || error)));
+    loadModels().catch((error) => addEntry("blocked", "Model List", String(error.message || error)));
   </script>
 </body>
 </html>

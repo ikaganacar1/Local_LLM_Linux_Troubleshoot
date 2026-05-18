@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import secrets
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -98,6 +100,9 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/action":
                 self._send_json(handle_action(payload))
                 return
+            if self.path == "/api/models":
+                self._send_json(handle_models(payload))
+                return
             self.send_error(HTTPStatus.NOT_FOUND)
         except LlamaCppError as exc:
             self._send_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_GATEWAY)
@@ -139,6 +144,29 @@ def handle_message(payload: dict[str, Any]) -> dict[str, Any]:
     session.agent.add_user_message(message)
     events = _continue_session(session)
     return {"ok": True, "session_id": session_id, "events": events}
+
+
+def handle_models(payload: dict[str, Any]) -> dict[str, Any]:
+    env_config = Config.from_env()
+    base_url = str(payload.get("base_url") or env_config.base_url).strip().rstrip("/")
+    api_key = str(payload.get("api_key") or "").strip() or env_config.api_key
+    headers = {"Accept": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    request = urllib.request.Request(f"{base_url}/models", headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            body = json.loads(response.read().decode("utf-8"))
+    except urllib.error.URLError as exc:
+        return {"ok": False, "error": f"Could not reach llama.cpp models endpoint: {exc}"}
+    except json.JSONDecodeError:
+        return {"ok": False, "error": "llama.cpp returned invalid JSON for models."}
+
+    models = []
+    for item in body.get("data", []):
+        if isinstance(item, dict) and item.get("id"):
+            models.append({"id": str(item["id"]), "owned_by": str(item.get("owned_by", ""))})
+    return {"ok": True, "models": models}
 
 
 def handle_approval(payload: dict[str, Any]) -> dict[str, Any]:

@@ -36,6 +36,8 @@ export LLAMA_CPP_MODEL=local-model
 python -m linux_troubleshoot_agent.web
 ```
 
+The GUI defaults to dark mode and includes a collapsible model selector. Use `Refresh` in the `Model` section to load models from the configured llama.cpp `/v1/models` endpoint.
+
 ## Docker
 
 Run it as a restart-always local service:
