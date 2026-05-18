@@ -30,4 +30,4 @@ VOLUME ["/host-home"]
 
 EXPOSE 28765
 
-CMD ["python", "-m", "linux_troubleshoot_agent.web", "--host", "0.0.0.0", "--port", "28765"]
+CMD ["python", "-m", "linux_troubleshoot_agent.web", "--host", "127.0.0.1", "--port", "28765"]

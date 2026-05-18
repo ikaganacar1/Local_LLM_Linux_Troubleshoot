@@ -344,7 +344,9 @@ def handle_action(payload: dict[str, Any]) -> dict[str, Any]:
         command = update_apply_command(package_manager)
         if not command:
             return {"ok": False, "session_id": session_id, "error": "No supported package manager detected."}
-        if settings.require_confirmation_for_modifying and not payload.get("confirmed"):
+        if settings.require_confirmation_for_modifying and payload.get("confirmed") is not True:
+            if payload.get("confirmed") is False:
+                return _declined_action_response(session_id, "Package update skipped.")
             return {
                 "ok": True,
                 "session_id": session_id,
@@ -373,7 +375,9 @@ def handle_action(payload: dict[str, Any]) -> dict[str, Any]:
                 "error": "Personal folder organization permission is disabled in settings.",
             }
         plan = session.pending_organize_plan or plan_home_organization()
-        if settings.require_confirmation_for_modifying and not payload.get("confirmed"):
+        if settings.require_confirmation_for_modifying and payload.get("confirmed") is not True:
+            if payload.get("confirmed") is False:
+                return _declined_action_response(session_id, "Folder organization skipped.")
             return {
                 "ok": True,
                 "session_id": session_id,
@@ -391,6 +395,14 @@ def handle_action(payload: dict[str, Any]) -> dict[str, Any]:
         return {"ok": True, "session_id": session_id, "events": [{"type": "organize_result", "result": result}]}
 
     return {"ok": False, "session_id": session_id, "error": f"Unknown action: {action}"}
+
+
+def _declined_action_response(session_id: str, content: str) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "session_id": session_id,
+        "events": [{"type": "notice", "content": content}],
+    }
 
 
 def _get_or_create_session(payload: dict[str, Any]) -> tuple[str, WebSession]:

@@ -957,8 +957,14 @@
       return { entry, meta, text, tokenText: "", hasTokens: false, finalized: false };
     }
 
+    function ensureLiveEntry(live) {
+      if (!live || live.finalized || live.entry) return;
+      Object.assign(live, createLiveEntry());
+    }
+
     function updateLiveStatus(live, text) {
       if (!live || live.hasTokens || live.finalized) return;
+      ensureLiveEntry(live);
       live.text.className = "live-text thinking";
       live.text.textContent = text;
       scrollToBottom();
@@ -966,6 +972,7 @@
 
     function appendLiveToken(live, token) {
       if (!live || live.finalized) return;
+      ensureLiveEntry(live);
       live.hasTokens = true;
       live.meta.textContent = "LLM stream";
       live.text.className = "live-text";
@@ -976,6 +983,7 @@
 
     function finalizeLiveAsMessage(live, content) {
       if (!live || live.finalized) return;
+      ensureLiveEntry(live);
       live.finalized = true;
       live.entry.className = "entry agent";
       live.meta.textContent = "Agent";
@@ -987,15 +995,27 @@
       scrollToBottom();
     }
 
+    function clearLiveDraft(live) {
+      if (!live || live.finalized) return;
+      if (live.entry) live.entry.remove();
+      live.entry = null;
+      live.meta = null;
+      live.text = null;
+      live.tokenText = "";
+      live.hasTokens = false;
+    }
+
     function removeLiveIfOnlyStatus(live) {
       if (!live || live.finalized) return;
+      if (!live.entry) return;
       if (!live.hasTokens) {
         live.entry.remove();
+        live.entry = null;
+        live.meta = null;
+        live.text = null;
         return;
       }
-      live.finalized = true;
-      live.entry.className = "entry agent";
-      live.meta.textContent = "LLM stream";
+      clearLiveDraft(live);
     }
 
     async function get(path) {
@@ -1196,10 +1216,10 @@
       } else if (event.type === "done") {
         removeLiveIfOnlyStatus(live);
       } else if (event.type === "error") {
-        removeLiveIfOnlyStatus(live);
+        clearLiveDraft(live);
         addEntry("blocked", "Error", event.content || "Streaming failed.");
       } else {
-        removeLiveIfOnlyStatus(live);
+        clearLiveDraft(live);
         renderEvent(event);
       }
     }
@@ -1217,10 +1237,12 @@
       }
     }
 
-    async function runAction(action, confirmed = false) {
+    async function runAction(action, confirmed) {
       setBusy(true, "Running action");
       try {
-        const data = await post("/api/action", basePayload({ action, confirmed }));
+        const payload = { action };
+        if (confirmed !== undefined) payload.confirmed = confirmed;
+        const data = await post("/api/action", basePayload(payload));
         handleResponse(data);
       } catch (error) {
         addEntry("blocked", "Error", String(error.message || error));

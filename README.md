@@ -69,6 +69,7 @@ The Docker service is configured with:
 
 - `restart: always`
 - unusual GUI port `28765`
+- bound to `127.0.0.1` by default, so the privileged GUI is only reachable from this PC
 - `network_mode: host`, so llama.cpp at `http://127.0.0.1:11435/v1` is reachable from the container
 - `pid: host` and `privileged: true`, so diagnostics can access the PC rather than only the container
 - `LTA_COMMAND_TARGET=host`, so command execution uses `nsenter` into the host namespaces

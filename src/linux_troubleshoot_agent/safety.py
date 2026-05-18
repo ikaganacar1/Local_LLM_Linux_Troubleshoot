@@ -160,12 +160,18 @@ def classify_command(command: str) -> SafetyResult:
         )
 
     try:
-        tokens = shlex.split(normalized)
+        tokens = _shell_tokens(normalized)
     except ValueError as exc:
         return SafetyResult(SafetyDecision.NEEDS_APPROVAL, f"Could not parse command: {exc}")
 
     if not tokens:
         return SafetyResult(SafetyDecision.FORBIDDEN, "Empty commands are not runnable.")
+
+    if "&" in tokens:
+        return SafetyResult(
+            SafetyDecision.NEEDS_APPROVAL,
+            "Shell background operators can hide follow-up commands.",
+        )
 
     command_segments = _split_pipeline_tokens(tokens)
     for segment in command_segments:
@@ -176,6 +182,12 @@ def classify_command(command: str) -> SafetyResult:
             return result
 
     return SafetyResult(SafetyDecision.SAFE, "Command appears to be read-only diagnostics.")
+
+
+def _shell_tokens(command: str) -> list[str]:
+    lexer = shlex.shlex(command, posix=True, punctuation_chars="|&;")
+    lexer.whitespace_split = True
+    return list(lexer)
 
 
 def _split_pipeline_tokens(tokens: list[str]) -> list[list[str]]:
