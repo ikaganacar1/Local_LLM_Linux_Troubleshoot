@@ -12,6 +12,11 @@ services:
       LTA_COMMAND_TARGET: host
       LTA_DATA_DIR: /app/.lta_data
       LTA_HOST_HOME: /host-home
+      LTA_MAX_TOKENS: "4096"
+      LTA_TEMPERATURE: "0.2"
+      LTA_TOP_P: "0.95"
+      LTA_TOP_K: "40"
+      LTA_REPEAT_PENALTY: "1.1"
     volumes:
       - ./.lta_data:/app/.lta_data
       - ${HOME}:/host-home

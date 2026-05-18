@@ -5,7 +5,7 @@ import json
 import secrets
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
@@ -14,6 +14,7 @@ from typing import Any
 from .agent import Agent
 from .config import Config
 from .llama_cpp_client import LlamaCppError
+from .llama_cpp_client import LlamaCppClient
 from .safety import SafetyDecision, classify_command
 from .shell import CommandResult, run_command
 from .storage import PermissionSettings, load_memory, load_settings, remember_scan, save_settings
@@ -85,6 +86,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         try:
             payload = self._read_json()
+            if self.path == "/api/message-stream":
+                self._send_message_stream(payload)
+                return
             if self.path == "/api/message":
                 self._send_json(handle_message(payload))
                 return
@@ -132,6 +136,23 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _send_message_stream(self, payload: dict[str, Any]) -> None:
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+
+        def emit(event: dict[str, Any]) -> None:
+            self.wfile.write((json.dumps(event) + "\n").encode("utf-8"))
+            self.wfile.flush()
+
+        try:
+            handle_message_stream(payload, emit)
+        except LlamaCppError as exc:
+            emit({"type": "error", "content": str(exc)})
+        except Exception as exc:
+            emit({"type": "error", "content": str(exc)})
+
 
 def handle_message(payload: dict[str, Any]) -> dict[str, Any]:
     session_id, session = _get_or_create_session(payload)
@@ -144,6 +165,20 @@ def handle_message(payload: dict[str, Any]) -> dict[str, Any]:
     session.agent.add_user_message(message)
     events = _continue_session(session)
     return {"ok": True, "session_id": session_id, "events": events}
+
+
+def handle_message_stream(payload: dict[str, Any], emit) -> None:
+    session_id, session = _get_or_create_session(payload)
+    message = str(payload.get("message", "")).strip()
+    emit({"type": "session", "session_id": session_id})
+    if not message:
+        emit({"type": "error", "content": "Message is empty."})
+        return
+
+    session.pending_command = None
+    session.pending_reason = None
+    session.agent.add_user_message(message)
+    _continue_session_stream(session, emit)
 
 
 def handle_models(payload: dict[str, Any]) -> dict[str, Any]:
@@ -328,7 +363,9 @@ def handle_action(payload: dict[str, Any]) -> dict[str, Any]:
 def _get_or_create_session(payload: dict[str, Any]) -> tuple[str, WebSession]:
     session_id = str(payload.get("session_id") or "")
     if session_id and session_id in SESSIONS:
-        return session_id, SESSIONS[session_id]
+        session = SESSIONS[session_id]
+        _update_session_config(session, payload)
+        return session_id, session
 
     env_config = Config.from_env()
     base_url = str(payload.get("base_url") or env_config.base_url).strip()
@@ -342,10 +379,40 @@ def _get_or_create_session(payload: dict[str, Any]) -> tuple[str, WebSession]:
         system_prompt_path=env_config.system_prompt_path,
         timeout_seconds=env_config.timeout_seconds,
         max_steps=env_config.max_steps,
+        max_tokens=_int_payload(payload, "max_tokens", env_config.max_tokens),
+        temperature=_float_payload(payload, "temperature", env_config.temperature),
+        top_p=_float_payload(payload, "top_p", env_config.top_p),
+        top_k=_int_payload(payload, "top_k", env_config.top_k),
+        repeat_penalty=_float_payload(payload, "repeat_penalty", env_config.repeat_penalty),
     )
     session_id = secrets.token_urlsafe(16)
     SESSIONS[session_id] = WebSession(agent=Agent.create(config))
     return session_id, SESSIONS[session_id]
+
+
+def _update_session_config(session: WebSession, payload: dict[str, Any]) -> None:
+    old = session.agent.config
+    base_url = str(payload.get("base_url") or old.base_url).strip()
+    model = str(payload.get("model") or old.model).strip()
+    api_key = str(payload.get("api_key") or "").strip() or old.api_key
+    new_config = replace(
+        old,
+        base_url=base_url,
+        model=model,
+        api_key=api_key,
+        max_tokens=_int_payload(payload, "max_tokens", old.max_tokens),
+        temperature=_float_payload(payload, "temperature", old.temperature),
+        top_p=_float_payload(payload, "top_p", old.top_p),
+        top_k=_int_payload(payload, "top_k", old.top_k),
+        repeat_penalty=_float_payload(payload, "repeat_penalty", old.repeat_penalty),
+    )
+    if new_config != old:
+        session.agent.config = new_config
+        session.agent.client = LlamaCppClient(
+            base_url=new_config.base_url,
+            model=new_config.model,
+            api_key=new_config.api_key,
+        )
 
 
 def _continue_session(session: WebSession) -> list[dict[str, Any]]:
@@ -414,6 +481,84 @@ def _continue_session(session: WebSession) -> list[dict[str, Any]]:
     return events
 
 
+def _continue_session_stream(session: WebSession, emit) -> None:
+    settings = load_settings()
+    for _ in range(session.agent.config.max_steps):
+        emit({"type": "status", "content": "LLM is thinking"})
+
+        def on_delta(delta: str) -> None:
+            emit({"type": "token", "content": delta})
+
+        action = session.agent.next_action_stream(on_delta)
+        action_type = action.get("type")
+
+        if action_type == "message":
+            emit({"type": "message", "content": str(action.get("content", "")).strip()})
+            emit({"type": "done"})
+            return
+
+        if action_type not in {"command", "approval"}:
+            emit({"type": "message", "content": str(action)})
+            emit({"type": "done"})
+            return
+
+        reason = str(action.get("reason", "")).strip()
+        command = str(action.get("command", "")).strip()
+        if not command:
+            emit({"type": "notice", "content": "The model requested an empty command."})
+            emit({"type": "done"})
+            return
+
+        emit({"type": "proposed_command", "reason": reason, "command": command})
+
+        if action_type == "approval":
+            safety = classify_command(command)
+            if safety.decision == SafetyDecision.FORBIDDEN:
+                note = f"Blocked forbidden command `{command}`: {safety.reason}"
+                session.agent.record_controller_note(note)
+                emit({"type": "blocked", "content": note})
+                continue
+            if _permission_allows_command(command, settings) and not settings.require_confirmation_for_modifying:
+                emit({"type": "status", "content": "Running approved command"})
+                result = run_command(command, session.agent.config.timeout_seconds)
+                session.agent.record_command_result(result)
+                emit(_command_event(result))
+                continue
+            session.pending_command = command
+            session.pending_reason = reason
+            emit({"type": "approval_required", "reason": reason, "command": command})
+            emit({"type": "done"})
+            return
+
+        safety = classify_command(command)
+        if safety.decision == SafetyDecision.FORBIDDEN:
+            note = f"Blocked forbidden command `{command}`: {safety.reason}"
+            session.agent.record_controller_note(note)
+            emit({"type": "blocked", "content": note})
+            continue
+
+        if safety.decision == SafetyDecision.NEEDS_APPROVAL:
+            if _permission_allows_command(command, settings) and not settings.require_confirmation_for_modifying:
+                emit({"type": "status", "content": "Running permitted command"})
+                result = run_command(command, session.agent.config.timeout_seconds)
+                session.agent.record_command_result(result)
+                emit(_command_event(result))
+                continue
+            session.pending_command = command
+            session.pending_reason = safety.reason
+            emit({"type": "approval_required", "reason": safety.reason, "command": command})
+            emit({"type": "done"})
+            return
+
+        emit({"type": "status", "content": f"Running diagnostic: {command}"})
+        result = run_command(command, session.agent.config.timeout_seconds)
+        session.agent.record_command_result(result)
+        emit(_command_event(result))
+
+    emit({"type": "notice", "content": "Stopped after reaching the per-turn step limit."})
+    emit({"type": "done"})
+
+
 def _command_event(result: CommandResult) -> dict[str, Any]:
     return {
         "type": "command_result",
@@ -449,6 +594,20 @@ def _permission_allows_command(command: str, settings: PermissionSettings) -> bo
     if settings.allow_service_changes and normalized.startswith(("systemctl ", "sudo systemctl ", "service ", "sudo service ")):
         return True
     return False
+
+
+def _int_payload(payload: dict[str, Any], key: str, default: int) -> int:
+    try:
+        return int(payload.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _float_payload(payload: dict[str, Any], key: str, default: float) -> float:
+    try:
+        return float(payload.get(key, default))
+    except (TypeError, ValueError):
+        return default
 
 
 def _asset(name: str) -> bytes:

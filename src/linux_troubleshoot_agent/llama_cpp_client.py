@@ -22,7 +22,10 @@ class LlamaCppClient:
         messages: list[dict[str, str]],
         *,
         temperature: float = 0.2,
-        max_tokens: int = 900,
+        max_tokens: int = 4096,
+        top_p: float = 0.95,
+        top_k: int = 40,
+        repeat_penalty: float = 1.1,
     ) -> str:
         url = f"{self.base_url.rstrip('/')}/chat/completions"
         payload: dict[str, Any] = {
@@ -30,6 +33,9 @@ class LlamaCppClient:
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
+            "top_p": top_p,
+            "top_k": top_k,
+            "repeat_penalty": repeat_penalty,
         }
         data = json.dumps(payload).encode("utf-8")
         headers = {"Content-Type": "application/json"}
@@ -51,3 +57,55 @@ class LlamaCppClient:
             return body["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
             raise LlamaCppError(f"Unexpected llama.cpp response: {body!r}") from exc
+
+    def chat_stream(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float = 0.2,
+        max_tokens: int = 4096,
+        top_p: float = 0.95,
+        top_k: int = 40,
+        repeat_penalty: float = 1.1,
+    ):
+        url = f"{self.base_url.rstrip('/')}/chat/completions"
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "top_p": top_p,
+            "top_k": top_k,
+            "repeat_penalty": repeat_penalty,
+            "stream": True,
+        }
+        data = json.dumps(payload).encode("utf-8")
+        headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        request = urllib.request.Request(url, data=data, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                for raw_line in response:
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    payload_text = line.removeprefix("data:").strip()
+                    if payload_text == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(payload_text)
+                    except json.JSONDecodeError:
+                        continue
+                    try:
+                        delta = chunk["choices"][0].get("delta", {})
+                        content = delta.get("content") or ""
+                    except (KeyError, IndexError, TypeError):
+                        content = ""
+                    if content:
+                        yield content
+        except urllib.error.URLError as exc:
+            raise LlamaCppError(
+                f"Could not reach llama.cpp at {url}. Is the server running?"
+            ) from exc

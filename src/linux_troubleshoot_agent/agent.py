@@ -35,7 +35,30 @@ class Agent:
         self.messages.append({"role": "user", "content": content})
 
     def next_action(self) -> dict[str, Any]:
-        raw = self.client.chat(self.messages)
+        raw = self.client.chat(
+            self.messages,
+            max_tokens=self.config.max_tokens,
+            temperature=self.config.temperature,
+            top_p=self.config.top_p,
+            top_k=self.config.top_k,
+            repeat_penalty=self.config.repeat_penalty,
+        )
+        self.messages.append({"role": "assistant", "content": raw})
+        return parse_action(raw)
+
+    def next_action_stream(self, on_delta) -> dict[str, Any]:
+        chunks: list[str] = []
+        for delta in self.client.chat_stream(
+            self.messages,
+            max_tokens=self.config.max_tokens,
+            temperature=self.config.temperature,
+            top_p=self.config.top_p,
+            top_k=self.config.top_k,
+            repeat_penalty=self.config.repeat_penalty,
+        ):
+            chunks.append(delta)
+            on_delta(delta)
+        raw = "".join(chunks)
         self.messages.append({"role": "assistant", "content": raw})
         return parse_action(raw)
 

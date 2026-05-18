@@ -13,6 +13,11 @@ class Config:
     system_prompt_path: Path | None
     timeout_seconds: int
     max_steps: int
+    max_tokens: int
+    temperature: float
+    top_p: float
+    top_k: int
+    repeat_penalty: float
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -24,4 +29,9 @@ class Config:
             system_prompt_path=Path(prompt_path).expanduser() if prompt_path else None,
             timeout_seconds=int(os.environ.get("LTA_COMMAND_TIMEOUT", "30")),
             max_steps=int(os.environ.get("LTA_MAX_STEPS", "6")),
+            max_tokens=int(os.environ.get("LTA_MAX_TOKENS", "4096")),
+            temperature=float(os.environ.get("LTA_TEMPERATURE", "0.2")),
+            top_p=float(os.environ.get("LTA_TOP_P", "0.95")),
+            top_k=int(os.environ.get("LTA_TOP_K", "40")),
+            repeat_penalty=float(os.environ.get("LTA_REPEAT_PENALTY", "1.1")),
         )

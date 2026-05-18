@@ -14,7 +14,6 @@
       --line: #2a3548;
       --text: #edf2f7;
       --muted: #94a3b8;
-      --faint: #64748b;
       --blue: #60a5fa;
       --blue-strong: #2563eb;
       --green: #34d399;
@@ -32,7 +31,6 @@
       --line: #d7dde6;
       --text: #111827;
       --muted: #5b687a;
-      --faint: #7c899c;
       --blue: #2563eb;
       --blue-strong: #1d4ed8;
       --green: #047857;
@@ -54,111 +52,76 @@
       font: inherit;
     }
     .app {
-      min-height: 100vh;
+      height: 100vh;
       display: grid;
-      grid-template-columns: 360px 1fr;
-    }
-    aside {
-      border-right: 1px solid var(--line);
-      background: linear-gradient(180deg, var(--panel), var(--bg));
-      padding: 18px;
-      overflow: auto;
+      grid-template-columns: minmax(0, 1fr) 320px;
+      overflow: hidden;
     }
     main {
       min-width: 0;
       display: grid;
-      grid-template-rows: auto 1fr auto;
+      grid-template-rows: auto minmax(0, 1fr) auto;
     }
-    .brand {
+    aside {
+      border-left: 1px solid var(--line);
+      background: linear-gradient(180deg, var(--panel), var(--bg));
+      padding: 18px;
+      overflow: auto;
       display: grid;
-      gap: 4px;
-      margin-bottom: 16px;
+      align-content: start;
+      gap: 12px;
+    }
+    header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(17, 23, 34, 0.86);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .top-title {
+      display: grid;
+      gap: 2px;
+    }
+    .top-title strong {
+      font-size: 16px;
+    }
+    .top-title span {
+      color: var(--muted);
+      font-size: 12px;
     }
     .brand-title {
       margin: 0;
       font-size: 18px;
-      font-weight: 780;
+      font-weight: 800;
     }
     .brand-subtitle {
       color: var(--muted);
       font-size: 12px;
     }
-    details.panel {
+    .rail-card, .status-pill, .memory-card {
       border: 1px solid var(--line);
       border-radius: 8px;
-      background: rgba(255, 255, 255, 0.02);
-      margin-bottom: 10px;
-      overflow: hidden;
-    }
-    details.panel > summary {
-      list-style: none;
-      cursor: pointer;
-      padding: 12px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      color: var(--text);
-      font-weight: 760;
       background: var(--panel-2);
-      border-bottom: 1px solid transparent;
-    }
-    details.panel[open] > summary {
-      border-bottom-color: var(--line);
-    }
-    details.panel > summary::-webkit-details-marker {
-      display: none;
-    }
-    details.panel > summary::after {
-      content: "+";
-      color: var(--muted);
-      font-weight: 800;
-    }
-    details.panel[open] > summary::after {
-      content: "-";
-    }
-    .panel-body {
       padding: 12px;
-      display: grid;
-      gap: 10px;
+      box-shadow: var(--shadow);
     }
-    label {
+    .rail-card {
       display: grid;
-      gap: 6px;
+      gap: 9px;
+    }
+    .rail-title {
       color: var(--muted);
-      font-size: 12px;
-      font-weight: 680;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
     }
-    input[type="text"], textarea {
-      width: 100%;
-      border: 1px solid var(--line);
-      border-radius: 7px;
-      background: var(--panel-3);
-      color: var(--text);
-      padding: 10px 11px;
-      outline: none;
-    }
-    textarea {
-      min-height: 54px;
-      max-height: 180px;
-      resize: vertical;
-    }
-    input:focus, textarea:focus {
-      border-color: var(--blue);
-      box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.16);
-    }
-    .check {
-      grid-template-columns: 18px 1fr;
-      align-items: start;
-      color: var(--text);
-      font-size: 13px;
-      font-weight: 650;
-    }
-    input[type="checkbox"] {
-      width: 16px;
-      height: 16px;
-      margin-top: 2px;
-      accent-color: var(--blue);
+    .status-pill, .memory-card {
+      color: var(--muted);
+      white-space: pre-line;
+      word-break: break-word;
+      min-height: 40px;
     }
     button {
       border: 1px solid transparent;
@@ -189,68 +152,19 @@
       background: var(--red);
       color: #fff;
     }
-    .button-grid {
+    .rail-actions {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 8px;
     }
-    .model-list {
-      display: grid;
-      gap: 6px;
-      max-height: 210px;
-      overflow: auto;
-      padding-right: 2px;
-    }
-    .model-item {
-      text-align: left;
-      border-color: var(--line);
-      background: var(--panel-3);
-      min-height: 36px;
-      padding: 8px 10px;
-      word-break: break-word;
-    }
-    .model-item.active {
-      border-color: var(--blue);
-      box-shadow: inset 3px 0 0 var(--blue);
-    }
-    .small-row {
-      display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 8px;
-      align-items: end;
-    }
-    .memory-card, .status-pill {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--panel-2);
-      color: var(--muted);
-      padding: 10px;
-      white-space: pre-line;
-      word-break: break-word;
-    }
-    header {
-      padding: 16px 20px;
-      border-bottom: 1px solid var(--line);
-      background: rgba(17, 23, 34, 0.86);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-    }
-    .top-title {
-      display: grid;
-      gap: 2px;
-    }
-    .top-title strong {
-      font-size: 15px;
-    }
-    .top-title span {
-      color: var(--muted);
-      font-size: 12px;
+    .rail-actions .wide {
+      grid-column: 1 / -1;
     }
     .workspace {
-      padding: 20px;
+      min-height: 0;
       overflow: auto;
+      padding: 20px;
+      scroll-behavior: smooth;
     }
     .log {
       max-width: 1180px;
@@ -269,12 +183,36 @@
     .entry.agent { border-left: 4px solid var(--green); }
     .entry.warn { border-left: 4px solid var(--amber); }
     .entry.blocked { border-left: 4px solid var(--red); }
+    .entry.live { border-left: 4px solid var(--blue); }
     .meta {
       margin-bottom: 7px;
       color: var(--muted);
       font-size: 11px;
       font-weight: 800;
       text-transform: uppercase;
+    }
+    .live-text {
+      min-height: 22px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .thinking {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--muted);
+    }
+    .thinking::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--blue);
+      animation: pulse 1s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.35; transform: scale(0.88); }
+      50% { opacity: 1; transform: scale(1.12); }
     }
     .issue-list {
       display: grid;
@@ -311,15 +249,47 @@
       max-width: 1180px;
       margin: 0 auto;
       display: grid;
-      grid-template-columns: 1fr auto;
+      grid-template-columns: minmax(0, 1fr) auto;
       gap: 10px;
       align-items: end;
     }
-    .approval-actions {
-      display: flex;
-      gap: 8px;
-      margin-top: 10px;
-      flex-wrap: wrap;
+    input, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel-3);
+      color: var(--text);
+      padding: 10px 11px;
+      outline: none;
+    }
+    textarea {
+      min-height: 54px;
+      max-height: 180px;
+      resize: vertical;
+    }
+    input:focus, textarea:focus {
+      border-color: var(--blue);
+      box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.16);
+    }
+    label {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 680;
+    }
+    .check {
+      grid-template-columns: 18px 1fr;
+      align-items: start;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 650;
+    }
+    input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      margin-top: 2px;
+      accent-color: var(--blue);
     }
     .empty {
       border: 1px dashed var(--line);
@@ -329,105 +299,207 @@
       padding: 36px 14px;
       background: var(--panel);
     }
+    .approval-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+    dialog {
+      width: min(920px, calc(100vw - 32px));
+      max-height: min(820px, calc(100vh - 32px));
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 0;
+      background: var(--panel);
+      color: var(--text);
+      box-shadow: var(--shadow);
+    }
+    dialog::backdrop {
+      background: rgba(0, 0, 0, 0.62);
+    }
+    .modal-header {
+      padding: 16px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+    .modal-header h2 {
+      margin: 0;
+      font-size: 17px;
+    }
+    .modal-body {
+      padding: 16px;
+      overflow: auto;
+      display: grid;
+      gap: 14px;
+    }
+    .settings-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .settings-section {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-2);
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+      align-content: start;
+    }
+    .settings-section h3 {
+      margin: 0;
+      font-size: 13px;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .model-list {
+      display: grid;
+      gap: 6px;
+      max-height: 210px;
+      overflow: auto;
+      padding-right: 2px;
+    }
+    .model-item {
+      text-align: left;
+      border-color: var(--line);
+      background: var(--panel-3);
+      min-height: 36px;
+      padding: 8px 10px;
+      word-break: break-word;
+    }
+    .model-item.active {
+      border-color: var(--blue);
+      box-shadow: inset 3px 0 0 var(--blue);
+    }
+    .field-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .modal-footer {
+      padding: 14px 16px;
+      border-top: 1px solid var(--line);
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
     @media (max-width: 940px) {
       .app { grid-template-columns: 1fr; }
-      aside { border-right: 0; border-bottom: 1px solid var(--line); }
-      .button-grid, .composer, .small-row { grid-template-columns: 1fr; }
+      aside { border-left: 0; border-top: 1px solid var(--line); order: 2; }
+      main { order: 1; min-height: 70vh; }
+      .composer, .settings-grid, .field-row { grid-template-columns: 1fr; }
       header { align-items: flex-start; flex-direction: column; }
     }
   </style>
 </head>
 <body>
   <div class="app">
-    <aside>
-      <div class="brand">
-        <h1 class="brand-title">Linux Troubleshooting Agent</h1>
-        <div class="brand-subtitle">Local diagnostics and maintenance</div>
-      </div>
-
-      <details class="panel" open>
-        <summary>Model</summary>
-        <div class="panel-body">
-          <label>
-            llama.cpp base URL
-            <input id="baseUrl" type="text" value="http://127.0.0.1:11435/v1" spellcheck="false">
-          </label>
-          <div class="small-row">
-            <label>
-              active model
-              <input id="model" type="text" value="local-model" spellcheck="false">
-            </label>
-            <button id="refreshModels" class="secondary" type="button">Refresh</button>
-          </div>
-          <div id="modelList" class="model-list">
-            <button class="model-item active" type="button" data-model="local-model">local-model</button>
-          </div>
-        </div>
-      </details>
-
-      <details class="panel" open>
-        <summary>Actions</summary>
-        <div class="panel-body">
-          <div class="button-grid">
-            <button id="scan" class="primary" type="button">Scan System</button>
-            <button id="checkUpdates" class="secondary" type="button">Check Updates</button>
-            <button id="applyUpdates" class="secondary" type="button">Apply Updates</button>
-            <button id="previewOrganize" class="secondary" type="button">Plan Folders</button>
-            <button id="applyOrganize" class="secondary" type="button">Organize</button>
-          </div>
-        </div>
-      </details>
-
-      <details class="panel">
-        <summary>Permissions</summary>
-        <div class="panel-body">
-          <label class="check"><input id="autoRunReadonly" type="checkbox"><span>Auto-run read-only scans</span></label>
-          <label class="check"><input id="allowUpdates" type="checkbox"><span>Allow package updates</span></label>
-          <label class="check"><input id="allowServices" type="checkbox"><span>Allow service changes</span></label>
-          <label class="check"><input id="allowOrganize" type="checkbox"><span>Allow personal folder organization</span></label>
-          <label class="check"><input id="requireConfirm" type="checkbox"><span>Confirm modifying actions</span></label>
-          <button id="saveSettings" class="secondary" type="button">Save Permissions</button>
-        </div>
-      </details>
-
-      <details class="panel">
-        <summary>Appearance</summary>
-        <div class="panel-body">
-          <label class="check"><input id="darkMode" type="checkbox"><span>Dark mode</span></label>
-        </div>
-      </details>
-
-      <details class="panel" open>
-        <summary>Memory</summary>
-        <div class="panel-body">
-          <div id="memory" class="memory-card">Loading</div>
-        </div>
-      </details>
-    </aside>
-
     <main>
       <header>
         <div class="top-title">
           <strong>System Console</strong>
-          <span>Read-only scans run automatically; modifying actions remain permission-gated.</span>
+          <span>Streaming responses, host diagnostics, permission-gated maintenance.</span>
         </div>
         <div id="status" class="status-pill">Ready</div>
       </header>
-      <div class="workspace">
+      <div id="workspace" class="workspace">
         <div id="log" class="log">
           <div class="empty">Run a scan or describe a problem.</div>
         </div>
       </div>
       <footer>
         <form id="composer" class="composer">
-          <textarea id="message" placeholder="Example: HDMI monitor is not detected on KDE Wayland"></textarea>
+          <textarea id="message" placeholder="Example: how to fix wol@enp11s0.service"></textarea>
           <button id="send" class="primary" type="submit">Send</button>
         </form>
       </footer>
     </main>
+
+    <aside>
+      <div>
+        <h1 class="brand-title">Linux Troubleshooting Agent</h1>
+        <div class="brand-subtitle">Local LLM maintenance console</div>
+      </div>
+      <div class="rail-card">
+        <div class="rail-title">Actions</div>
+        <div class="rail-actions">
+          <button id="scan" class="primary wide" type="button">Scan System</button>
+          <button id="checkUpdates" class="secondary" type="button">Updates</button>
+          <button id="applyUpdates" class="secondary" type="button">Apply</button>
+          <button id="previewOrganize" class="secondary" type="button">Plan</button>
+          <button id="applyOrganize" class="secondary" type="button">Organize</button>
+        </div>
+      </div>
+      <button id="openSettings" class="secondary" type="button">Settings</button>
+      <div class="rail-card">
+        <div class="rail-title">Memory</div>
+        <div id="memory" class="memory-card">Loading</div>
+      </div>
+    </aside>
   </div>
 
+  <dialog id="settingsDialog">
+    <div class="modal-header">
+      <h2>Settings</h2>
+      <button id="closeSettings" class="secondary" type="button">Close</button>
+    </div>
+    <div class="modal-body">
+      <div class="settings-grid">
+        <section class="settings-section">
+          <h3>Model</h3>
+          <label>
+            llama.cpp base URL
+            <input id="baseUrl" type="text" value="http://127.0.0.1:11435/v1" spellcheck="false">
+          </label>
+          <label>
+            active model
+            <input id="model" type="text" value="local-model" spellcheck="false">
+          </label>
+          <button id="refreshModels" class="secondary" type="button">Refresh Model List</button>
+          <div id="modelList" class="model-list">
+            <button class="model-item active" type="button" data-model="local-model">local-model</button>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h3>LLM Parameters</h3>
+          <div class="field-row">
+            <label>max tokens<input id="maxTokens" type="number" min="128" max="32768" step="128" value="4096"></label>
+            <label>temperature<input id="temperature" type="number" min="0" max="2" step="0.05" value="0.2"></label>
+          </div>
+          <div class="field-row">
+            <label>top p<input id="topP" type="number" min="0" max="1" step="0.01" value="0.95"></label>
+            <label>top k<input id="topK" type="number" min="0" max="500" step="1" value="40"></label>
+          </div>
+          <label>repeat penalty<input id="repeatPenalty" type="number" min="0.8" max="2" step="0.01" value="1.1"></label>
+        </section>
+
+        <section class="settings-section">
+          <h3>Permissions</h3>
+          <label class="check"><input id="autoRunReadonly" type="checkbox"><span>Auto-run read-only scans</span></label>
+          <label class="check"><input id="allowUpdates" type="checkbox"><span>Allow package updates</span></label>
+          <label class="check"><input id="allowServices" type="checkbox"><span>Allow service changes</span></label>
+          <label class="check"><input id="allowOrganize" type="checkbox"><span>Allow personal folder organization</span></label>
+          <label class="check"><input id="requireConfirm" type="checkbox"><span>Confirm modifying actions</span></label>
+        </section>
+
+        <section class="settings-section">
+          <h3>Appearance</h3>
+          <label class="check"><input id="darkMode" type="checkbox"><span>Dark mode</span></label>
+        </section>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button id="saveSettings" class="primary" type="button">Save Settings</button>
+    </div>
+  </dialog>
+
   <script>
+    const workspace = document.querySelector("#workspace");
     const log = document.querySelector("#log");
     const form = document.querySelector("#composer");
     const message = document.querySelector("#message");
@@ -439,6 +511,14 @@
     const statusBox = document.querySelector("#status");
     const memoryBox = document.querySelector("#memory");
     const darkMode = document.querySelector("#darkMode");
+    const settingsDialog = document.querySelector("#settingsDialog");
+    const params = {
+      max_tokens: document.querySelector("#maxTokens"),
+      temperature: document.querySelector("#temperature"),
+      top_p: document.querySelector("#topP"),
+      top_k: document.querySelector("#topK"),
+      repeat_penalty: document.querySelector("#repeatPenalty")
+    };
     const fields = {
       auto_run_readonly_scan: document.querySelector("#autoRunReadonly"),
       allow_package_updates: document.querySelector("#allowUpdates"),
@@ -449,11 +529,18 @@
     let sessionId = null;
     let busy = false;
 
+    function scrollToBottom(force = false) {
+      const gap = workspace.scrollHeight - workspace.scrollTop - workspace.clientHeight;
+      if (force || gap < 220) workspace.scrollTop = workspace.scrollHeight;
+    }
+
     function setBusy(value, text) {
       busy = value;
       send.disabled = value;
       for (const button of document.querySelectorAll("button")) button.disabled = value;
       statusBox.textContent = value ? (text || "Working") : "Ready";
+      document.querySelector("#openSettings").disabled = false;
+      document.querySelector("#closeSettings").disabled = false;
     }
 
     function clearEmpty() {
@@ -476,7 +563,7 @@
       }
       if (extra) entry.appendChild(extra);
       log.appendChild(entry);
-      entry.scrollIntoView({ block: "end", behavior: "smooth" });
+      scrollToBottom(true);
       return entry;
     }
 
@@ -484,6 +571,60 @@
       const pre = document.createElement("pre");
       pre.textContent = text || "(empty)";
       return pre;
+    }
+
+    function createLiveEntry() {
+      clearEmpty();
+      const entry = document.createElement("div");
+      entry.className = "entry live";
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = "LLM";
+      const text = document.createElement("div");
+      text.className = "live-text thinking";
+      text.textContent = "Connecting to llama.cpp";
+      entry.append(meta, text);
+      log.appendChild(entry);
+      scrollToBottom(true);
+      return { entry, meta, text, tokenText: "", hasTokens: false, finalized: false };
+    }
+
+    function updateLiveStatus(live, text) {
+      if (!live || live.hasTokens || live.finalized) return;
+      live.text.className = "live-text thinking";
+      live.text.textContent = text;
+      scrollToBottom();
+    }
+
+    function appendLiveToken(live, token) {
+      if (!live || live.finalized) return;
+      live.hasTokens = true;
+      live.meta.textContent = "LLM stream";
+      live.text.className = "live-text";
+      live.tokenText += token;
+      live.text.textContent = live.tokenText;
+      scrollToBottom();
+    }
+
+    function finalizeLiveAsMessage(live, content) {
+      if (!live || live.finalized) return;
+      live.finalized = true;
+      live.entry.className = "entry agent";
+      live.meta.textContent = "Agent";
+      live.text.className = "live-text";
+      live.text.textContent = content || live.tokenText || "Done.";
+      scrollToBottom();
+    }
+
+    function removeLiveIfOnlyStatus(live) {
+      if (!live || live.finalized) return;
+      if (!live.hasTokens) {
+        live.entry.remove();
+        return;
+      }
+      live.finalized = true;
+      live.entry.className = "entry agent";
+      live.meta.textContent = "LLM stream";
     }
 
     async function get(path) {
@@ -500,11 +641,21 @@
       return response.json();
     }
 
+    function numberValue(field, fallback) {
+      const value = Number(field.value);
+      return Number.isFinite(value) ? value : fallback;
+    }
+
     function basePayload(extra = {}) {
       return {
         session_id: sessionId,
         base_url: baseUrl.value.trim(),
         model: model.value.trim(),
+        max_tokens: numberValue(params.max_tokens, 4096),
+        temperature: numberValue(params.temperature, 0.2),
+        top_p: numberValue(params.top_p, 0.95),
+        top_k: numberValue(params.top_k, 40),
+        repeat_penalty: numberValue(params.repeat_penalty, 1.1),
         ...extra
       };
     }
@@ -513,6 +664,25 @@
       document.documentElement.dataset.theme = value;
       darkMode.checked = value === "dark";
       localStorage.setItem("lta-theme", value);
+    }
+
+    function saveLocalParams() {
+      localStorage.setItem("lta-params", JSON.stringify({
+        max_tokens: params.max_tokens.value,
+        temperature: params.temperature.value,
+        top_p: params.top_p.value,
+        top_k: params.top_k.value,
+        repeat_penalty: params.repeat_penalty.value
+      }));
+    }
+
+    function loadLocalParams() {
+      try {
+        const saved = JSON.parse(localStorage.getItem("lta-params") || "{}");
+        for (const [key, field] of Object.entries(params)) {
+          if (saved[key] !== undefined) field.value = saved[key];
+        }
+      } catch {}
     }
 
     async function loadState() {
@@ -585,13 +755,15 @@
     }
 
     async function saveSettings() {
-      setBusy(true, "Saving permissions");
+      setBusy(true, "Saving settings");
+      saveLocalParams();
       try {
         const data = await post("/api/settings", { settings: collectSettings() });
         if (!data.ok) throw new Error(data.error || "Save failed");
         applySettings(data.settings);
         renderMemory(data.memory || {});
-        addEntry("agent", "Permissions Saved", "Updated local permission settings.");
+        settingsDialog.close();
+        addEntry("agent", "Settings Saved", "Updated permissions and local model parameters.");
       } catch (error) {
         addEntry("blocked", "Error", String(error.message || error));
       } finally {
@@ -602,13 +774,60 @@
     async function sendMessage(text) {
       setBusy(true, "Thinking");
       addEntry("user", "User", text);
+      const live = createLiveEntry();
       try {
-        const data = await post("/api/message", basePayload({ message: text }));
-        handleResponse(data);
+        await streamMessage(text, live);
       } catch (error) {
+        removeLiveIfOnlyStatus(live);
         addEntry("blocked", "Error", String(error.message || error));
       } finally {
         setBusy(false);
+      }
+    }
+
+    async function streamMessage(text, live) {
+      const response = await fetch("/api/message-stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(basePayload({ message: text }))
+      });
+      if (!response.ok || !response.body) throw new Error(`Streaming request failed with HTTP ${response.status}`);
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          handleStreamEvent(JSON.parse(line), live);
+        }
+      }
+      if (buffer.trim()) handleStreamEvent(JSON.parse(buffer), live);
+      removeLiveIfOnlyStatus(live);
+    }
+
+    function handleStreamEvent(event, live) {
+      if (event.type === "session") {
+        sessionId = event.session_id || sessionId;
+      } else if (event.type === "status") {
+        updateLiveStatus(live, event.content || "Working");
+      } else if (event.type === "token") {
+        appendLiveToken(live, event.content || "");
+      } else if (event.type === "message") {
+        finalizeLiveAsMessage(live, event.content || "");
+      } else if (event.type === "done") {
+        removeLiveIfOnlyStatus(live);
+      } else if (event.type === "error") {
+        removeLiveIfOnlyStatus(live);
+        addEntry("blocked", "Error", event.content || "Streaming failed.");
+      } else {
+        removeLiveIfOnlyStatus(live);
+        renderEvent(event);
       }
     }
 
@@ -759,6 +978,8 @@
       sendMessage(text);
     });
 
+    document.querySelector("#openSettings").addEventListener("click", () => settingsDialog.showModal());
+    document.querySelector("#closeSettings").addEventListener("click", () => settingsDialog.close());
     model.addEventListener("input", markActiveModel);
     refreshModels.addEventListener("click", loadModels);
     darkMode.addEventListener("change", () => applyTheme(darkMode.checked ? "dark" : "light"));
@@ -770,6 +991,7 @@
     document.querySelector("#applyOrganize").addEventListener("click", () => runAction("organize_apply"));
 
     applyTheme(localStorage.getItem("lta-theme") || "dark");
+    loadLocalParams();
     loadState().catch((error) => addEntry("blocked", "Error", String(error.message || error)));
     loadModels().catch((error) => addEntry("blocked", "Model List", String(error.message || error)));
   </script>

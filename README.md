@@ -33,10 +33,21 @@ You can also set defaults before launching:
 ```bash
 export LLAMA_CPP_BASE_URL=http://127.0.0.1:11435/v1
 export LLAMA_CPP_MODEL=local-model
+export LTA_MAX_TOKENS=4096
+export LTA_TEMPERATURE=0.2
+export LTA_TOP_P=0.95
+export LTA_TOP_K=40
+export LTA_REPEAT_PENALTY=1.1
 python -m linux_troubleshoot_agent.web
 ```
 
-The GUI defaults to dark mode and includes a collapsible model selector. Use `Refresh` in the `Model` section to load models from the configured llama.cpp `/v1/models` endpoint.
+The GUI defaults to dark mode and streams LLM output into the chat as tokens arrive. Use `Settings` to configure:
+
+- llama.cpp base URL and active model
+- model list from the configured `/v1/models` endpoint
+- max tokens, temperature, top-p, top-k, and repeat penalty
+- action permissions
+- light/dark mode
 
 ## Docker
 
