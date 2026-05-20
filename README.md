@@ -1,34 +1,66 @@
-# Local Linux Troubleshooting Agent
+# Local LLM Linux Troubleshooter
 
-A safe local Linux troubleshooting agent focused on Arch Linux and similar systems. It uses a ready llama.cpp OpenAI-compatible server for the model and runs local diagnostic commands through a safety controller.
+![Local LLM Linux Troubleshooter banner](banner.png)
 
-## Files
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
+![llama.cpp](https://img.shields.io/badge/llama.cpp-OpenAI%20compatible-222222)
+![Docker](https://img.shields.io/badge/Docker-restart%20always-2496ED?logo=docker&logoColor=white)
+![Linux](https://img.shields.io/badge/Linux-Arch%20%7C%20Ubuntu%20%7C%20Alpine-FCC624?logo=linux&logoColor=111111)
+![GUI](https://img.shields.io/badge/GUI-local%20web%20app-4B5563)
 
-- `prompts/system_prompt.txt`: Full system prompt for the agent runtime.
-- `prompts/description.txt`: Short agent description for UI, metadata, or config summaries.
-- `src/linux_troubleshoot_agent/`: Python agent, llama.cpp client, command safety checks, CLI, and browser GUI.
+A local web app for diagnosing Linux problems with a llama.cpp model. It can scan the host, read logs, explain likely causes, propose repair steps, and ask before doing anything that changes the system.
 
-## GUI
-
-Run the browser UI:
-
-```bash
-python -m linux_troubleshoot_agent.web
-```
-
-Then open:
-
-```text
-http://127.0.0.1:28765/
-```
-
-The llama.cpp base URL defaults to:
+The default llama.cpp endpoint is:
 
 ```text
 http://127.0.0.1:11435/v1
 ```
 
-You can also set defaults before launching:
+## What It Does
+
+- Runs read-only diagnostics for services, packages, boot, storage, network, display, audio, and Bluetooth.
+- Streams model output in the chat, including collapsible reasoning when the model exposes thinking tokens.
+- Keeps chat history in the browser and local scan memory in `.lta_data/`.
+- Lets you configure model, context/token settings, permissions, and theme from the GUI.
+- Supports package-manager-aware update checks for common Linux distros.
+- Uses a safety controller before executing commands.
+
+## Docker Setup
+
+Start the app as a local restart-always service:
+
+```bash
+docker compose up -d --build
+```
+
+Open:
+
+```text
+http://127.0.0.1:28765/
+```
+
+The compose setup is intentionally local:
+
+- GUI binds to `127.0.0.1:28765`.
+- `network_mode: host` lets the container reach llama.cpp on `127.0.0.1:11435`.
+- `pid: host`, `privileged: true`, and `LTA_COMMAND_TARGET=host` allow host diagnostics instead of container-only checks.
+- `${HOME}` is mounted at `/host-home` for folder organization.
+- `.lta_data/` stores local memory and audit data.
+
+Set a local UI password if other people can access your browser session:
+
+```bash
+export LTA_UI_PASSWORD='choose-a-local-password'
+docker compose up -d --build
+```
+
+## Run Without Docker
+
+```bash
+PYTHONPATH=src python3 -m linux_troubleshoot_agent.web
+```
+
+Useful defaults:
 
 ```bash
 export LLAMA_CPP_BASE_URL=http://127.0.0.1:11435/v1
@@ -38,125 +70,60 @@ export LTA_TEMPERATURE=0.2
 export LTA_TOP_P=0.95
 export LTA_TOP_K=40
 export LTA_REPEAT_PENALTY=1.1
-python -m linux_troubleshoot_agent.web
 ```
 
-The GUI defaults to dark mode and streams LLM output into the chat as tokens arrive. Use `Settings` to configure:
+## CLI
 
-- llama.cpp base URL and active model
-- model list from the configured `/v1/models` endpoint
-- max tokens, temperature, top-p, top-k, and repeat penalty; leave fields blank to use llama.cpp server defaults
-- action permissions
-- light/dark mode
-
-Set an optional local UI password before launching if you want the browser console locked:
+Ask a troubleshooting question:
 
 ```bash
-export LTA_UI_PASSWORD='choose-a-local-password'
+PYTHONPATH=src python3 -m linux_troubleshoot_agent "HDMI monitor is not detected"
 ```
 
-Chats are kept in browser local storage, restored after page refresh, and listed in the right-side chat history. New chats are automatically named from the first message with a local LLM-generated title when available.
-
-The GUI also includes a workflow rail and issue dashboard. Workflow buttons run focused read-only diagnostics for display, audio, network, services, packages, boot, storage, and Bluetooth, then ask the model for a subsystem-specific summary.
-
-## Docker
-
-Run it as a restart-always local service:
+Check command safety classification:
 
 ```bash
-docker compose up -d --build
+PYTHONPATH=src python3 -m linux_troubleshoot_agent --check-command "journalctl -p 3 -xb"
 ```
-
-Then open:
-
-```text
-http://127.0.0.1:28765/
-```
-
-The Docker service is configured with:
-
-- `restart: always`
-- unusual GUI port `28765`
-- bound to `127.0.0.1` by default, so the privileged GUI is only reachable from this PC
-- `network_mode: host`, so llama.cpp at `http://127.0.0.1:11435/v1` is reachable from the container
-- `pid: host` and `privileged: true`, so diagnostics can access the PC rather than only the container
-- `LTA_COMMAND_TARGET=host`, so command execution uses `nsenter` into the host namespaces
-- `${HOME}:/host-home`, so folder organization works on your real home directory
-
-Local memory is stored in `.lta_data/` and mounted into the container.
-
-The served page receives a local API token and all POST APIs require that token. POST requests with an untrusted `Origin` or `Referer` are rejected.
-
-## Automatic Maintenance
-
-The GUI includes buttons for:
-
-- `Scan System`: read-only scan for OS, kernel, failed services, journal errors, disk space, network, GPU/audio basics, and available updates.
-- `Check Updates`: distro-aware read-only package update check.
-- `Apply Updates`: runs the detected package manager update command when package update permission is enabled.
-- `Plan Folders`: previews moves from `~/Downloads` and `~/Desktop` into `~/Organized` by file type.
-- `Organize`: applies the folder plan when personal folder organization permission is enabled.
-- `Export Audit` / `Export Profile`: downloads local JSON for review, issue reports, or backups.
-
-The agent stores local memory in `.lta_data/` by default. Set `LTA_DATA_DIR` to use a different location.
-
-Scans include suggested repair plans. These plans are guidance only; commands that can modify the system still require the configured permissions and confirmation flow.
-
-For commands that use `sudo`, launch the GUI from a terminal so password prompts are visible if your sudo session is not already authenticated.
 
 ## Tests
 
-Run normal offline regression tests:
+Offline regression tests:
 
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests
 ```
 
-Run live backend/LLM integration tests separately after Docker and llama.cpp are running:
-
-```bash
-PYTHONPATH=src python3 -m unittest discover -s integration_tests
-```
-
-Useful live-test overrides:
+Live tests, kept separate because they need Docker and llama.cpp running:
 
 ```bash
 LTA_APP_URL=http://127.0.0.1:28765 \
 LTA_LLAMA_BASE_URL=http://127.0.0.1:11435/v1 \
 LTA_LIVE_MODEL=Qwen3-Coder-Next-UD-IQ3_XXS \
-PYTHONPATH=src python3 -m unittest discover -s integration_tests
+PYTHONPATH=src python3 -m unittest discover -s integration_tests -v
 ```
 
-## CLI
+## Safety Notes
 
-Run the terminal agent:
+Read-only commands run first. Package installs/removals, service changes, config edits, folder moves, process kills, reboot/power actions, and other modifying commands require permission in the GUI.
+
+The command runner avoids `shell=True`, rejects unsupported shell syntax, and blocks known destructive patterns. Approved actions are logged to the local audit trail.
+
+For commands that need `sudo`, start the GUI from a terminal so password prompts are visible if your sudo session is not already active.
+
+## Project Layout
+
+```text
+src/linux_troubleshoot_agent/   Python package, GUI server, safety checks, scanner
+src/linux_troubleshoot_agent/web_assets/   Browser UI
+tests/                          Offline regression tests
+integration_tests/              Live app and llama.cpp tests
+prompts/                        Agent prompt and short description
+compose.yaml                    Local Docker service
+```
+
+This checkout uses a local git wrapper. If normal `git status` stops at `/mnt`, use:
 
 ```bash
-python -m linux_troubleshoot_agent "HDMI monitor is not detected"
-```
-
-Check how a command will be classified:
-
-```bash
-python -m linux_troubleshoot_agent --check-command "journalctl -p 3 -xb"
-```
-
-## Safety Model
-
-The agent should run read-only diagnostic commands first, explain what it is checking, rank likely causes from evidence, and ask before making system changes.
-
-It must ask before installing or removing packages, editing configs, modifying services, killing processes, rebooting, or running destructive commands.
-
-Supported command syntax is executed without a shell: argv commands, simple pipelines, and `&&`, `||`, or `;` sequencing. Unsupported shell syntax is rejected by the command runner rather than passed to Bash.
-
-Before a modifying command or maintenance action is approved, the UI shows a plan with risk, backup, rollback, and verification notes. Scans, workflows, approvals, declines, and maintenance actions are recorded in the local memory audit trail.
-
-## Suggested Agent Config Shape
-
-```json
-{
-  "name": "Local Linux Troubleshooting Agent",
-  "description_file": "prompts/description.txt",
-  "system_prompt_file": "prompts/system_prompt.txt"
-}
+scripts/git-local status
 ```
