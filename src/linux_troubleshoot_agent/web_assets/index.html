@@ -92,6 +92,38 @@
       color: var(--muted);
       font-size: 12px;
     }
+    .top-panel {
+      display: flex;
+      align-items: stretch;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+      min-width: 280px;
+    }
+    .top-metric {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-2);
+      padding: 8px 10px;
+      min-width: 130px;
+      color: var(--muted);
+      box-shadow: var(--shadow);
+    }
+    .top-metric strong {
+      display: block;
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.2;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 240px;
+    }
+    .top-metric span {
+      display: block;
+      font-size: 11px;
+      line-height: 1.25;
+    }
     .brand-title {
       margin: 0;
       font-size: 18px;
@@ -287,6 +319,21 @@
     @keyframes pulse {
       0%, 100% { opacity: 0.35; transform: scale(0.88); }
       50% { opacity: 1; transform: scale(1.12); }
+    }
+    .thinking-details {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-2);
+      padding: 8px 10px;
+    }
+    .thinking-details summary {
+      cursor: pointer;
+      color: var(--muted);
+      font-weight: 800;
+    }
+    .thinking-details pre {
+      margin-top: 8px;
+      max-height: 260px;
     }
     .issue-list {
       display: grid;
@@ -491,6 +538,8 @@
       main { order: 1; min-height: 70vh; }
       .composer, .settings-grid, .field-row { grid-template-columns: 1fr; }
       header { align-items: flex-start; flex-direction: column; }
+      .top-panel { width: 100%; justify-content: stretch; }
+      .top-metric { flex: 1 1 130px; }
     }
   </style>
 </head>
@@ -502,7 +551,17 @@
           <strong>System Console</strong>
           <span>Streaming responses, host diagnostics, permission-gated maintenance.</span>
         </div>
-        <div id="status" class="status-pill">Ready</div>
+        <div class="top-panel">
+          <div class="top-metric">
+            <span>Model</span>
+            <strong id="modelIndicator">local-model</strong>
+          </div>
+          <div class="top-metric">
+            <span>Remaining Context</span>
+            <strong id="contextIndicator">unknown</strong>
+          </div>
+          <div id="status" class="status-pill">Ready</div>
+        </div>
       </header>
       <div id="workspace" class="workspace" tabindex="0">
         <div id="log" class="log">
@@ -658,6 +717,8 @@
     const modelList = document.querySelector("#modelList");
     const refreshModels = document.querySelector("#refreshModels");
     const statusBox = document.querySelector("#status");
+    const modelIndicator = document.querySelector("#modelIndicator");
+    const contextIndicator = document.querySelector("#contextIndicator");
     const memoryBox = document.querySelector("#memory");
     const issueDashboard = document.querySelector("#issueDashboard");
     const darkMode = document.querySelector("#darkMode");
@@ -686,6 +747,7 @@
     let autoScrollEnabled = true;
     let currentChatId = null;
     let chats = {};
+    let currentContextSize = Number(localStorage.getItem("lta-context-size") || "0") || null;
 
     function nearBottom() {
       return workspace.scrollHeight - workspace.scrollTop - workspace.clientHeight < 120;
@@ -784,6 +846,7 @@
       chat.updatedAt = new Date().toISOString();
       saveChats();
       renderHistory();
+      updateTopIndicators();
     }
 
     function persistSession() {
@@ -823,6 +886,7 @@
       }
       autoScrollEnabled = true;
       scrollToBottom(true);
+      updateTopIndicators();
     }
 
     async function nameChatFromLLM(firstMessage) {
@@ -848,6 +912,7 @@
       statusBox.textContent = value ? (text || "Working") : "Ready";
       document.querySelector("#openSettings").disabled = false;
       document.querySelector("#closeSettings").disabled = false;
+      updateTopIndicators();
     }
 
     function clearEmpty() {
@@ -865,7 +930,7 @@
       entry.appendChild(meta);
       if (body) {
         const renderAsMarkdown = options.markdown || kind === "agent";
-        const content = renderAsMarkdown ? renderMarkdown(body) : document.createElement("div");
+        const content = renderAsMarkdown ? renderAssistantContent(body) : document.createElement("div");
         if (!renderAsMarkdown) content.textContent = body;
         entry.appendChild(content);
       }
@@ -894,6 +959,35 @@
       root.className = "markdown";
       for (const block of parseMarkdownBlocks(text || "")) root.appendChild(block);
       return root;
+    }
+
+    function renderAssistantContent(text) {
+      const root = document.createElement("div");
+      root.className = "markdown";
+      const parsed = splitThinkingBlocks(text || "");
+      if (parsed.thinking.length) {
+        const details = document.createElement("details");
+        details.className = "thinking-details";
+        const summary = document.createElement("summary");
+        summary.textContent = `Thinking (${parsed.thinking.length})`;
+        details.appendChild(summary);
+        details.appendChild(codeBlock(parsed.thinking.join("\n\n---\n\n")));
+        root.appendChild(details);
+      }
+      const visible = parsed.visible.trim();
+      for (const block of parseMarkdownBlocks(visible || (parsed.thinking.length ? "" : text || ""))) {
+        root.appendChild(block);
+      }
+      return root;
+    }
+
+    function splitThinkingBlocks(text) {
+      const thinking = [];
+      const visible = text.replace(/<think(?:ing)?>([\s\S]*?)(?:<\/think(?:ing)?>|$)/gi, (_match, content) => {
+        thinking.push(String(content || "").trim());
+        return "";
+      });
+      return { thinking: thinking.filter(Boolean), visible };
     }
 
     function parseMarkdownBlocks(text) {
@@ -1061,7 +1155,7 @@
       live.entry.className = "entry agent";
       live.meta.textContent = "Agent";
       const finalText = content || live.tokenText || "Done.";
-      const rendered = renderMarkdown(finalText);
+      const rendered = renderAssistantContent(finalText);
       live.text.replaceWith(rendered);
       live.text = rendered;
       persistEntry({ kind: "agent", title: "Agent", body: finalText, pre: "" });
@@ -1134,6 +1228,37 @@
         repeat_penalty: optionalNumberValue(params.repeat_penalty),
         ...extra
       };
+    }
+
+    function estimateChatTokens() {
+      const chat = activeChat();
+      const text = (chat.items || [])
+        .map((item) => `${item.title || ""}\n${item.body || ""}\n${item.pre || ""}`)
+        .join("\n");
+      const approximateContentTokens = Math.ceil(text.length / 4);
+      return approximateContentTokens + 1200;
+    }
+
+    function formatCompactNumber(value) {
+      if (!Number.isFinite(value)) return "unknown";
+      if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`;
+      if (value >= 1000) return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}k`;
+      return String(Math.max(0, Math.round(value)));
+    }
+
+    function updateTopIndicators() {
+      const selectedModel = model.value.trim() || "local-model";
+      modelIndicator.textContent = selectedModel;
+      modelIndicator.title = selectedModel;
+      if (!currentContextSize) {
+        contextIndicator.textContent = "unknown";
+        contextIndicator.title = "llama.cpp context size is not loaded yet.";
+        return;
+      }
+      const used = estimateChatTokens();
+      const remaining = Math.max(0, currentContextSize - used);
+      contextIndicator.textContent = `~${formatCompactNumber(remaining)} left`;
+      contextIndicator.title = `Approximate context remaining: ${remaining} tokens. Estimated used: ${used}. Context size: ${currentContextSize}.`;
     }
 
     function applyTheme(value) {
@@ -1221,6 +1346,11 @@
         });
         if (!data.ok) throw new Error(data.error || "Could not load model defaults");
         applyParameterDefaults(data.parameters || {});
+        if (Number.isFinite(Number(data.context_size)) && Number(data.context_size) > 0) {
+          currentContextSize = Number(data.context_size);
+          localStorage.setItem("lta-context-size", String(currentContextSize));
+        }
+        updateTopIndicators();
         addEntry(
           "agent",
           "Model Defaults",
@@ -1263,6 +1393,7 @@
     function selectModel(id) {
       model.value = id;
       markActiveModel();
+      updateTopIndicators();
       loadModelDefaults(id);
     }
 
@@ -1271,6 +1402,7 @@
       for (const item of modelList.querySelectorAll(".model-item")) {
         item.classList.toggle("active", item.dataset.model === current);
       }
+      updateTopIndicators();
     }
 
     function collectSettings() {
@@ -1442,7 +1574,7 @@
     async function streamMessage(text, live) {
       const response = await fetch("/api/message-stream", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-LTA-Token": authToken },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify(basePayload({ message: text }))
       });
       if (!response.ok || !response.body) throw new Error(`Streaming request failed with HTTP ${response.status}`);
@@ -1683,6 +1815,12 @@
       if (!text) return;
       message.value = "";
       sendMessage(text);
+    });
+
+    message.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
+      event.preventDefault();
+      if (!busy) form.requestSubmit();
     });
 
     document.querySelector("#openSettings").addEventListener("click", () => settingsDialog.showModal());

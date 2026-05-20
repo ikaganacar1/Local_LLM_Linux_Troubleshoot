@@ -291,6 +291,7 @@ def handle_model_defaults(payload: dict[str, Any]) -> dict[str, Any]:
                 "ok": True,
                 "model": model,
                 "parameters": parameters,
+                "context_size": _extract_context_size(body),
                 "source": "/props default_generation_settings",
             }
         errors.append("No default_generation_settings found.")
@@ -353,6 +354,32 @@ def _extract_generation_parameters(body: Any) -> dict[str, int | float]:
         else:
             parameters[target] = round(float(value), 4)
     return parameters
+
+
+def _extract_context_size(body: Any) -> int | None:
+    if not isinstance(body, dict):
+        return None
+    settings = body.get("default_generation_settings") or body.get("generation_settings")
+    candidates: list[Any] = [body.get("n_ctx")]
+    if isinstance(settings, dict):
+        candidates.append(settings.get("n_ctx"))
+        nested_params = settings.get("params")
+        if isinstance(nested_params, dict):
+            candidates.append(nested_params.get("n_ctx"))
+    slots = body.get("slots")
+    if isinstance(slots, list):
+        for slot in slots:
+            if isinstance(slot, dict):
+                candidates.append(slot.get("n_ctx"))
+                params = slot.get("params")
+                if isinstance(params, dict):
+                    candidates.append(params.get("n_ctx"))
+    for value in candidates:
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)) and value > 0:
+            return int(value)
+    return None
 
 
 def handle_title(payload: dict[str, Any]) -> dict[str, Any]:

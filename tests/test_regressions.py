@@ -20,6 +20,7 @@ from linux_troubleshoot_agent.web import (
     SESSIONS,
     WebSession,
     _index_asset,
+    _extract_context_size,
     _optional_float_payload,
     _optional_int_payload,
     _permission_allows_command,
@@ -285,6 +286,16 @@ class WebRegressionTests(unittest.TestCase):
         self.assertTrue(response["ok"])
         self.assertEqual(response["parameters"]["max_tokens"], 2048)
         self.assertEqual(response["parameters"]["temperature"], 0.45)
+        self.assertEqual(response["context_size"], 8192)
+
+    def test_context_size_can_be_extracted_from_nested_props(self) -> None:
+        self.assertEqual(
+            _extract_context_size(
+                {"default_generation_settings": {"params": {"n_ctx": 200192}}}
+            ),
+            200192,
+        )
+        self.assertEqual(_extract_context_size({"n_ctx": 32768}), 32768)
 
     def test_workflow_action_returns_structured_scan_and_audit(self) -> None:
         with (
@@ -435,6 +446,9 @@ class StaticConfigurationTests(unittest.TestCase):
         self.assertIn("function applyParameterDefaults(defaults)", html)
         self.assertIn("loadModelDefaults(id);", html)
         self.assertIn('min="-1"', html)
+        self.assertIn("context_size", html)
+        self.assertIn("Remaining Context", html)
+        self.assertIn("function updateTopIndicators()", html)
 
     def test_index_embeds_local_auth_token_placeholder_replacement(self) -> None:
         html = _index_asset().decode("utf-8")
@@ -471,6 +485,10 @@ class StaticConfigurationTests(unittest.TestCase):
         self.assertIn('id="loginDialog"', html)
         self.assertIn('post("/api/login"', html)
         self.assertIn("runWorkflow(button.dataset.workflow)", html)
+        self.assertIn('event.key !== "Enter"', html)
+        self.assertIn("form.requestSubmit()", html)
+        self.assertIn("function splitThinkingBlocks(text)", html)
+        self.assertIn("thinking-details", html)
 
 
 if __name__ == "__main__":
