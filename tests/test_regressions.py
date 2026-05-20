@@ -525,6 +525,8 @@ class StaticConfigurationTests(unittest.TestCase):
         self.assertIn("live-thinking", html)
         self.assertIn("Thinking tokens (~", html)
         self.assertIn("live.thinkingPre.textContent", html)
+        self.assertIn("No reasoning tokens received yet", html)
+        self.assertIn("Waiting for reasoning tokens from llama.cpp", html)
         self.assertIn("Issue Tasks", html)
         self.assertIn("function reviewIssuesAfterChange(evidence)", html)
         self.assertIn('post("/api/review-issues"', html)

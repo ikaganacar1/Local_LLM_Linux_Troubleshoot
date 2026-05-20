@@ -398,11 +398,7 @@
       max-height: 260px;
     }
     .live-thinking {
-      display: none;
       margin-bottom: 8px;
-    }
-    .live-thinking[open] {
-      display: block;
     }
     .issue-list {
       display: grid;
@@ -1246,9 +1242,11 @@
       status.textContent = "Connecting to llama.cpp";
       const thinkingDetails = document.createElement("details");
       thinkingDetails.className = "thinking-details live-thinking";
+      thinkingDetails.open = true;
       const thinkingSummary = document.createElement("summary");
       thinkingSummary.textContent = "Thinking";
       const thinkingPre = codeBlock("");
+      thinkingPre.textContent = "Waiting for reasoning tokens from llama.cpp...";
       thinkingDetails.append(thinkingSummary, thinkingPre);
       const text = document.createElement("div");
       text.className = "live-text live-placeholder";
@@ -1305,10 +1303,8 @@
         live.status.textContent = thinkingChars ? `Thinking... ~${Math.ceil(thinkingChars / 4)} tokens` : "Streaming answer...";
       }
       if (live.thinkingDetails && live.thinkingSummary && live.thinkingPre) {
-        live.thinkingDetails.style.display = thinkingText ? "block" : "none";
-        if (thinkingText && !live.thinkingDetails.open) live.thinkingDetails.open = true;
         live.thinkingSummary.textContent = thinkingText ? `Thinking tokens (~${Math.ceil(thinkingChars / 4)})` : "Thinking";
-        live.thinkingPre.textContent = thinkingText || "";
+        live.thinkingPre.textContent = thinkingText || "No reasoning tokens received yet. This model/server may expose only final-answer tokens.";
       }
       const visible = parsed.visible.replace(/<think(?:ing)?>[\s\S]*$/i, "").trim();
       live.text.textContent = visible || (thinkingChars ? "Thinking is streaming. The answer will appear here." : live.tokenText);
