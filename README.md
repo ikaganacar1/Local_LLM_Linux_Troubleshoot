@@ -10,6 +10,8 @@
 
 A local web app for diagnosing Linux problems with a llama.cpp model. It can scan the host, read logs, explain likely causes, propose repair steps, and ask before doing anything that changes the system.
 
+Tested on Arch Linux and Linux Mint with Qwen3.5 27B and Qwen3-Coder-Next 80B.
+
 The default llama.cpp endpoint is:
 
 ```text
