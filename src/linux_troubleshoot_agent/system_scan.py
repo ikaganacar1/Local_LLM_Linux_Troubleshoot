@@ -201,9 +201,10 @@ def detect_issues(results: dict[str, dict[str, Any]], package_manager: str | Non
     full_lines = []
     for line in disk.splitlines()[1:]:
         parts = line.split()
-        if len(parts) >= 6 and parts[5] != "/boot":
+        if len(parts) >= 7:
+            mountpoint = parts[6]
             use = parts[5].rstrip("%")
-            if use.isdigit() and int(use) >= 90:
+            if mountpoint != "/boot" and use.isdigit() and int(use) >= 90:
                 full_lines.append(line)
     if full_lines:
         issues.append(
@@ -361,8 +362,9 @@ def _failed_service_names(text: str) -> list[str]:
     names: list[str] = []
     for line in text.splitlines():
         parts = line.split()
-        if len(parts) >= 2 and parts[0].endswith(".service"):
-            names.append(parts[0])
+        unit = parts[1] if parts and parts[0] == "●" and len(parts) >= 2 else parts[0] if parts else ""
+        if unit.endswith(".service"):
+            names.append(unit)
     return names[:20]
 
 

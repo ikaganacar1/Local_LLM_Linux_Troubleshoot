@@ -4,6 +4,7 @@ import argparse
 import hmac
 import json
 import secrets
+import shlex
 import urllib.parse
 import urllib.error
 import urllib.request
@@ -853,9 +854,54 @@ def _permission_allows_command(command: str, settings: PermissionSettings) -> bo
     )
     if settings.allow_package_updates and normalized in package_update_commands:
         return True
-    if settings.allow_service_changes and normalized.startswith(("systemctl ", "sudo systemctl ", "service ", "sudo service ")):
+    if settings.allow_service_changes and _service_change_allowed(normalized):
         return True
     return False
+
+
+def _service_change_allowed(command: str) -> bool:
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars="|&;")
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError:
+        return False
+    if not tokens or any(token in {"|", "&&", "||", ";", "&"} for token in tokens):
+        return False
+    if tokens[0] == "sudo":
+        tokens = tokens[1:]
+    if not tokens:
+        return False
+    systemctl_ops = {
+        "start",
+        "stop",
+        "restart",
+        "reload",
+        "try-restart",
+        "reload-or-restart",
+        "enable",
+        "disable",
+        "reenable",
+        "mask",
+        "unmask",
+        "reset-failed",
+    }
+    service_ops = {"start", "stop", "restart", "reload"}
+    if tokens[0] == "systemctl":
+        if len(tokens) < 2 or tokens[1] not in systemctl_ops:
+            return False
+        if tokens[1] == "reset-failed":
+            return True
+        return len(tokens) >= 3 and _looks_like_unit(tokens[2])
+    if tokens[0] == "service":
+        return len(tokens) >= 3 and tokens[2] in service_ops
+    return False
+
+
+def _looks_like_unit(value: str) -> bool:
+    if value.startswith("-") or "/" in value or value.endswith(".target"):
+        return False
+    return value.endswith((".service", ".socket", ".timer", ".path")) or "." not in value or "@" in value
 
 
 def _int_payload(payload: dict[str, Any], key: str, default: int) -> int:

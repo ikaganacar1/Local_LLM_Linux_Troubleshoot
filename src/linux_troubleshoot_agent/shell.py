@@ -84,6 +84,8 @@ def _run_plan(command: str, timeout_seconds: int) -> CommandResult:
 
 
 def _parse_command(command: str) -> list[tuple[str, list[list[str]]]]:
+    if _contains_unquoted_redirection(command):
+        raise ValueError("Shell redirection is not supported by the safe command runner.")
     tokens = _shell_tokens(command)
     if not tokens:
         raise ValueError("Empty commands are not runnable.")
@@ -100,9 +102,7 @@ def _parse_command(command: str) -> list[tuple[str, list[list[str]]]]:
             if not pipeline[-1]:
                 raise ValueError("Invalid empty pipeline segment.")
             pipeline.append([])
-        elif _looks_like_redirection(token):
-            raise ValueError(f"Shell redirection is not supported by the safe command runner: {token}")
-        elif any(ch in token for ch in "|&;"):
+        elif token and all(ch in "|&;" for ch in token):
             raise ValueError(f"Unsupported shell operator syntax: {token}")
         else:
             pipeline[-1].append(token)
@@ -126,10 +126,26 @@ def _shell_tokens(command: str) -> list[str]:
     return list(lexer)
 
 
-def _looks_like_redirection(token: str) -> bool:
-    if "<" in token or ">" in token:
-        return True
-    return len(token) >= 2 and token[:-1].isdigit() and token[-1] in {"<", ">"}
+def _contains_unquoted_redirection(command: str) -> bool:
+    quote = ""
+    escaped = False
+    for char in command:
+        if escaped:
+            escaped = False
+            continue
+        if quote:
+            if char == "\\" and quote == '"':
+                escaped = True
+                continue
+            if char == quote:
+                quote = ""
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            continue
+        if char in {"<", ">"}:
+            return True
+    return False
 
 
 def _run_pipeline(pipeline: list[list[str]], timeout_seconds: int) -> tuple[int, str, str]:

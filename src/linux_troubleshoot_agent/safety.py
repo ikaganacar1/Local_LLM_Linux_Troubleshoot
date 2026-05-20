@@ -177,6 +177,11 @@ def classify_command(command: str) -> SafetyResult:
     for segment in command_segments:
         if not segment:
             continue
+        if _is_forbidden_root_rm(segment):
+            return SafetyResult(
+                SafetyDecision.FORBIDDEN,
+                "Recursive forced deletion of the filesystem root is forbidden.",
+            )
         result = _classify_segment(segment)
         if result.decision != SafetyDecision.SAFE:
             return result
@@ -258,6 +263,25 @@ def _classify_segment(tokens: list[str]) -> SafetyResult:
         SafetyDecision.NEEDS_APPROVAL,
         f"`{first}` is not in the read-only allowlist.",
     )
+
+
+def _is_forbidden_root_rm(tokens: list[str]) -> bool:
+    try:
+        rm_index = tokens.index("rm")
+    except ValueError:
+        return False
+    flags = set()
+    targets = set()
+    for token in tokens[rm_index + 1 :]:
+        if token.startswith("--"):
+            if token in {"--recursive", "--force"}:
+                flags.add(token.removeprefix("--")[0])
+            continue
+        if token.startswith("-") and len(token) > 1:
+            flags.update(token.lstrip("-"))
+            continue
+        targets.add(token)
+    return "/" in targets and {"r", "f"}.issubset(flags)
 
 
 def _starts_with_any(tokens: list[str], prefixes: tuple[tuple[str, ...], ...]) -> bool:

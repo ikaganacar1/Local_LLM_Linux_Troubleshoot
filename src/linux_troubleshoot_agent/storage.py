@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import os
 import secrets
@@ -81,7 +82,7 @@ def auth_token() -> str:
 def load_memory() -> dict[str, Any]:
     path = data_dir() / "memory.json"
     if not path.exists():
-        memory = dict(DEFAULT_MEMORY)
+        memory = copy.deepcopy(DEFAULT_MEMORY)
         now = _now()
         memory["created_at"] = now
         memory["updated_at"] = now
@@ -90,9 +91,9 @@ def load_memory() -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        payload = dict(DEFAULT_MEMORY)
+        payload = copy.deepcopy(DEFAULT_MEMORY)
     for key, value in DEFAULT_MEMORY.items():
-        payload.setdefault(key, value)
+        payload.setdefault(key, copy.deepcopy(value))
     return payload
 
 

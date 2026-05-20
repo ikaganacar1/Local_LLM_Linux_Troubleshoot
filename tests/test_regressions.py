@@ -13,7 +13,7 @@ from unittest.mock import patch
 from linux_troubleshoot_agent.safety import SafetyDecision, classify_command
 from linux_troubleshoot_agent.shell import run_command
 from linux_troubleshoot_agent.storage import PermissionSettings, auth_token, load_memory, save_settings
-from linux_troubleshoot_agent.system_scan import summarize_scan
+from linux_troubleshoot_agent.system_scan import summarize_scan, update_check_command
 from linux_troubleshoot_agent.web import (
     Handler,
     SESSIONS,
@@ -22,6 +22,7 @@ from linux_troubleshoot_agent.web import (
     _optional_float_payload,
     _optional_int_payload,
     _permission_allows_command,
+    _service_change_allowed,
     handle_approval,
     handle_action,
     handle_model_defaults,
@@ -42,6 +43,12 @@ class SafetyRegressionTests(unittest.TestCase):
             with self.subTest(command=command):
                 result = classify_command(command)
                 self.assertEqual(result.decision, SafetyDecision.NEEDS_APPROVAL)
+
+    def test_root_rm_flag_orderings_are_forbidden(self) -> None:
+        for command in ("rm -fr /", "rm -f -r /", "sudo rm -rf /"):
+            with self.subTest(command=command):
+                result = classify_command(command)
+                self.assertEqual(result.decision, SafetyDecision.FORBIDDEN)
 
     def test_quoted_shell_operators_can_still_be_read_only_arguments(self) -> None:
         result = classify_command("sed -n '1;3p' /etc/os-release")
@@ -72,6 +79,19 @@ class SafetyRegressionTests(unittest.TestCase):
             _permission_allows_command("sudo apt update && sudo apt upgrade -y", settings)
         )
 
+    def test_service_auto_permission_is_limited_to_service_changes(self) -> None:
+        settings = PermissionSettings(
+            allow_service_changes=True,
+            require_confirmation_for_modifying=False,
+        )
+
+        self.assertTrue(_permission_allows_command("systemctl restart sshd.service", settings))
+        self.assertTrue(_permission_allows_command("sudo systemctl restart sshd", settings))
+        self.assertFalse(_permission_allows_command("systemctl reboot", settings))
+        self.assertFalse(_permission_allows_command("sudo systemctl poweroff", settings))
+        self.assertFalse(_permission_allows_command("systemctl isolate rescue.target", settings))
+        self.assertFalse(_service_change_allowed("systemctl restart default.target"))
+
     def test_timeout_output_is_json_serializable(self) -> None:
         result = run_command("printf hi; sleep 2", 1)
 
@@ -101,6 +121,19 @@ class SafetyRegressionTests(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 127)
         self.assertIn("redirection", result.stderr.lower())
+
+    def test_quoted_punctuation_remains_command_argument(self) -> None:
+        result = run_command("sed -n '1p;1p' /etc/os-release", 5)
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertTrue(result.stdout.strip())
+
+    def test_quoted_alpine_update_less_than_argument_is_not_redirection(self) -> None:
+        command = update_check_command("apk")
+        self.assertEqual(command, "apk version -l '<'")
+
+        result = run_command(command, 5)
+        self.assertNotIn("redirection", result.stderr.lower())
 
     def test_module_preserves_forbidden_exit_code(self) -> None:
         completed = subprocess.run(
@@ -279,6 +312,48 @@ class WebRegressionTests(unittest.TestCase):
         titles = [issue["title"] for issue in summary["issues"]]
         self.assertIn("Package updates available", titles)
         self.assertEqual(summary["update_count"], 1)
+
+    def test_default_memory_is_not_shared_between_data_dirs(self) -> None:
+        first = Path(self._tmp.name) / "first-memory"
+        second = Path(self._tmp.name) / "second-memory"
+
+        os.environ["LTA_DATA_DIR"] = str(first)
+        memory = load_memory()
+        memory["facts"]["os_name"] = "stale"
+        memory["audit"].append({"kind": "stale"})
+
+        os.environ["LTA_DATA_DIR"] = str(second)
+        fresh = load_memory()
+
+        self.assertEqual(fresh["facts"], {})
+        self.assertEqual(fresh["audit"], [])
+
+    def test_df_boot_mountpoint_is_skipped_and_failed_bullet_is_profiled(self) -> None:
+        summary = summarize_scan(
+            {
+                "disk_space": {
+                    "stdout": (
+                        "Filesystem Type Size Used Avail Use% Mounted on\n"
+                        "/dev/sda1 ext4 1G 950M 50M 95% /boot\n"
+                        "/dev/sda2 ext4 10G 9.5G 500M 95% /\n"
+                    ),
+                    "stderr": "",
+                    "exit_code": 0,
+                },
+                "failed_services": {
+                    "stdout": "● wol@enp11s0.service loaded failed failed Wake-on-LAN\n",
+                    "stderr": "",
+                    "exit_code": 0,
+                },
+            },
+            "apt",
+        )
+
+        disk_issues = [issue for issue in summary["issues"] if issue["title"] == "Filesystem nearly full"]
+        self.assertEqual(len(disk_issues), 1)
+        self.assertNotIn("/boot", disk_issues[0]["detail"])
+        self.assertIn("/", disk_issues[0]["detail"])
+        self.assertIn("wol@enp11s0.service", summary["failed_services"])
 
 
 class StaticConfigurationTests(unittest.TestCase):
