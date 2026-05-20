@@ -93,8 +93,17 @@ class LlamaCppClient:
                     try:
                         delta = chunk["choices"][0].get("delta", {})
                         content = delta.get("content") or ""
+                        reasoning = (
+                            delta.get("reasoning_content")
+                            or delta.get("reasoning")
+                            or delta.get("thinking")
+                            or ""
+                        )
                     except (KeyError, IndexError, TypeError):
                         content = ""
+                        reasoning = ""
+                    if reasoning:
+                        yield f"<think>{reasoning}</think>"
                     if content:
                         yield content
         except urllib.error.URLError as exc:

@@ -505,9 +505,20 @@ class StaticConfigurationTests(unittest.TestCase):
         self.assertIn("form.requestSubmit()", html)
         self.assertIn("function splitThinkingBlocks(text)", html)
         self.assertIn("thinking-details", html)
+        self.assertIn("live-thinking", html)
+        self.assertIn("Thinking tokens (~", html)
+        self.assertIn("live.thinkingPre.textContent", html)
         self.assertIn("function refreshIssuesAfterChange(label)", html)
         self.assertIn("basePayload({ analyze: false })", html)
         self.assertIn("Change applied. Running read-only verification scan", html)
+
+    def test_streaming_client_preserves_reasoning_deltas(self) -> None:
+        source = Path("src/linux_troubleshoot_agent/llama_cpp_client.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('delta.get("reasoning_content")', source)
+        self.assertIn('yield f"<think>{reasoning}</think>"', source)
 
 
 if __name__ == "__main__":

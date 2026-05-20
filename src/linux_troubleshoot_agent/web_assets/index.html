@@ -259,6 +259,40 @@
       white-space: pre-wrap;
       word-break: break-word;
     }
+    .live-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      width: fit-content;
+      max-width: 100%;
+      margin-bottom: 8px;
+      padding: 5px 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--panel-2);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+    }
+    .live-status::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      flex: 0 0 auto;
+      border-radius: 50%;
+      background: var(--blue);
+      animation: pulse 1s ease-in-out infinite;
+    }
+    .live-status.thinking-now {
+      color: var(--amber);
+      border-color: rgba(251, 191, 36, 0.55);
+    }
+    .live-status.thinking-now::before {
+      background: var(--amber);
+    }
+    .live-placeholder {
+      color: var(--muted);
+    }
     .markdown {
       display: grid;
       gap: 8px;
@@ -339,6 +373,13 @@
     .thinking-details pre {
       margin-top: 8px;
       max-height: 260px;
+    }
+    .live-thinking {
+      display: none;
+      margin-bottom: 8px;
+    }
+    .live-thinking[open] {
+      display: block;
     }
     .issue-list {
       display: grid;
@@ -1120,13 +1161,33 @@
       const meta = document.createElement("div");
       meta.className = "meta";
       meta.textContent = "LLM";
+      const status = document.createElement("div");
+      status.className = "live-status";
+      status.textContent = "Connecting to llama.cpp";
+      const thinkingDetails = document.createElement("details");
+      thinkingDetails.className = "thinking-details live-thinking";
+      const thinkingSummary = document.createElement("summary");
+      thinkingSummary.textContent = "Thinking";
+      const thinkingPre = codeBlock("");
+      thinkingDetails.append(thinkingSummary, thinkingPre);
       const text = document.createElement("div");
-      text.className = "live-text thinking";
-      text.textContent = "Connecting to llama.cpp";
-      entry.append(meta, text);
+      text.className = "live-text live-placeholder";
+      text.textContent = "Waiting for the first token...";
+      entry.append(meta, status, thinkingDetails, text);
       log.appendChild(entry);
       scrollToBottom(true);
-      return { entry, meta, text, tokenText: "", hasTokens: false, finalized: false };
+      return {
+        entry,
+        meta,
+        status,
+        thinkingDetails,
+        thinkingSummary,
+        thinkingPre,
+        text,
+        tokenText: "",
+        hasTokens: false,
+        finalized: false
+      };
     }
 
     function ensureLiveEntry(live) {
@@ -1135,10 +1196,16 @@
     }
 
     function updateLiveStatus(live, text) {
-      if (!live || live.hasTokens || live.finalized) return;
+      if (!live || live.finalized) return;
       ensureLiveEntry(live);
-      live.text.className = "live-text thinking";
-      live.text.textContent = text;
+      if (live.status) {
+        live.status.className = "live-status";
+        live.status.textContent = text;
+      }
+      if (!live.hasTokens && live.text) {
+        live.text.className = "live-text live-placeholder";
+        live.text.textContent = "Waiting for the first token...";
+      }
       scrollToBottom();
     }
 
@@ -1149,7 +1216,22 @@
       live.meta.textContent = "LLM stream";
       live.text.className = "live-text";
       live.tokenText += token;
-      live.text.textContent = live.tokenText;
+      const parsed = splitThinkingBlocks(live.tokenText);
+      const hasOpenThinking = /<think(?:ing)?>/i.test(live.tokenText) && !/<\/think(?:ing)?>/i.test(live.tokenText);
+      const thinkingText = parsed.thinking.join("\n\n---\n\n");
+      const thinkingChars = thinkingText.length;
+      if (live.status) {
+        live.status.className = `live-status ${thinkingChars ? "thinking-now" : ""}`;
+        live.status.textContent = thinkingChars ? `Thinking... ~${Math.ceil(thinkingChars / 4)} tokens` : "Streaming answer...";
+      }
+      if (live.thinkingDetails && live.thinkingSummary && live.thinkingPre) {
+        live.thinkingDetails.style.display = thinkingText ? "block" : "none";
+        if (thinkingText && !live.thinkingDetails.open) live.thinkingDetails.open = true;
+        live.thinkingSummary.textContent = thinkingText ? `Thinking tokens (~${Math.ceil(thinkingChars / 4)})` : "Thinking";
+        live.thinkingPre.textContent = thinkingText || "";
+      }
+      const visible = parsed.visible.replace(/<think(?:ing)?>[\s\S]*$/i, "").trim();
+      live.text.textContent = visible || (thinkingChars ? "Thinking is streaming. The answer will appear here." : live.tokenText);
       scrollToBottom();
     }
 
@@ -1161,6 +1243,8 @@
       live.meta.textContent = "Agent";
       const finalText = content || live.tokenText || "Done.";
       const rendered = renderAssistantContent(finalText);
+      if (live.status) live.status.remove();
+      if (live.thinkingDetails) live.thinkingDetails.remove();
       live.text.replaceWith(rendered);
       live.text = rendered;
       persistEntry({ kind: "agent", title: "Agent", body: finalText, pre: "" });
@@ -1172,6 +1256,10 @@
       if (live.entry) live.entry.remove();
       live.entry = null;
       live.meta = null;
+      live.status = null;
+      live.thinkingDetails = null;
+      live.thinkingSummary = null;
+      live.thinkingPre = null;
       live.text = null;
       live.tokenText = "";
       live.hasTokens = false;
@@ -1184,6 +1272,10 @@
         live.entry.remove();
         live.entry = null;
         live.meta = null;
+        live.status = null;
+        live.thinkingDetails = null;
+        live.thinkingSummary = null;
+        live.thinkingPre = null;
         live.text = null;
         return;
       }
