@@ -79,6 +79,7 @@ class LlamaCppClient:
         request = urllib.request.Request(url, data=data, headers=headers, method="POST")
         try:
             with urllib.request.urlopen(request, timeout=120) as response:
+                in_reasoning = False
                 for raw_line in response:
                     line = raw_line.decode("utf-8", errors="replace").strip()
                     if not line or not line.startswith("data:"):
@@ -103,9 +104,17 @@ class LlamaCppClient:
                         content = ""
                         reasoning = ""
                     if reasoning:
-                        yield f"<think>{reasoning}</think>"
+                        if not in_reasoning:
+                            yield "<think>"
+                            in_reasoning = True
+                        yield reasoning
                     if content:
+                        if in_reasoning:
+                            yield "</think>"
+                            in_reasoning = False
                         yield content
+                if in_reasoning:
+                    yield "</think>"
         except urllib.error.URLError as exc:
             raise LlamaCppError(
                 f"Could not reach llama.cpp at {url}. Is the server running?"

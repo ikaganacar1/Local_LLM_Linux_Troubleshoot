@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from linux_troubleshoot_agent.llama_cpp_client import LlamaCppClient
 from linux_troubleshoot_agent.safety import SafetyDecision, classify_command
 from linux_troubleshoot_agent.shell import run_command
 from linux_troubleshoot_agent.storage import PermissionSettings, auth_token, load_memory, save_settings
@@ -540,7 +541,34 @@ class StaticConfigurationTests(unittest.TestCase):
         )
 
         self.assertIn('delta.get("reasoning_content")', source)
-        self.assertIn('yield f"<think>{reasoning}</think>"', source)
+        self.assertIn("in_reasoning = False", source)
+        self.assertIn('yield "<think>"', source)
+        self.assertIn('yield "</think>"', source)
+        self.assertNotIn('yield f"<think>{reasoning}</think>"', source)
+
+    def test_streaming_client_groups_reasoning_into_one_block(self) -> None:
+        class FakeStream:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def __iter__(self):
+                chunks = [
+                    {"choices": [{"delta": {"reasoning_content": "reasoning"}}]},
+                    {"choices": [{"delta": {"reasoning_content": " more"}}]},
+                    {"choices": [{"delta": {"content": "answer"}}]},
+                ]
+                for chunk in chunks:
+                    yield f"data: {json.dumps(chunk)}\n\n".encode("utf-8")
+                yield b"data: [DONE]\n\n"
+
+        client = LlamaCppClient(base_url="http://llama.test/v1", model="local")
+        with patch("urllib.request.urlopen", return_value=FakeStream()):
+            streamed = "".join(client.chat_stream([{"role": "user", "content": "test"}]))
+
+        self.assertEqual(streamed, "<think>reasoning more</think>answer")
 
 
 if __name__ == "__main__":
