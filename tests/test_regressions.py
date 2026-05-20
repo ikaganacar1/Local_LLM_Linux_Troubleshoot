@@ -23,14 +23,15 @@ from linux_troubleshoot_agent.web import (
     _extract_context_size,
     _optional_float_payload,
     _optional_int_payload,
+    _parse_issue_review,
     _permission_allows_command,
     _service_change_allowed,
     handle_approval,
     handle_action,
     handle_export,
+    handle_issue_review,
     handle_login,
     handle_model_defaults,
-    handle_scan,
 )
 
 
@@ -320,21 +321,6 @@ class WebRegressionTests(unittest.TestCase):
         self.assertEqual(response["events"][1]["content"], "Network summary")
         self.assertEqual(load_memory()["audit"][-1]["kind"], "workflow")
 
-    def test_scan_can_skip_llm_analysis_for_verification_refresh(self) -> None:
-        with (
-            patch("linux_troubleshoot_agent.web.run_system_scan") as scan,
-            patch("linux_troubleshoot_agent.web._continue_session") as continued,
-        ):
-            scan.return_value = {
-                "summary": {"package_manager": "apt", "issues": []},
-                "results": {},
-            }
-            response = handle_scan({"session_id": "verify-scan", "analyze": False})
-
-        self.assertTrue(response["ok"])
-        self.assertEqual(response["events"][0]["type"], "scan_summary")
-        continued.assert_not_called()
-
     def test_blank_llm_parameters_mean_server_defaults(self) -> None:
         self.assertIsNone(_optional_int_payload({"max_tokens": None}, "max_tokens", 4096))
         self.assertIsNone(_optional_float_payload({"temperature": ""}, "temperature", 0.2))
@@ -431,6 +417,34 @@ class WebRegressionTests(unittest.TestCase):
         self.assertTrue(passed["ok"])
         self.assertIn(passed["login_token"], PASSWORD_SESSIONS)
 
+    def test_issue_review_parser_maps_statuses_to_existing_issue_tasks(self) -> None:
+        tasks = _parse_issue_review(
+            '{"tasks":[{"title":"Package updates available","status":"probably_fixed","reason":"apt upgrade exited 0"}]}',
+            [{"title": "Package updates available", "next_step": "Run updates."}],
+        )
+
+        self.assertEqual(tasks[0]["status"], "probably_fixed")
+        self.assertEqual(tasks[0]["reason"], "apt upgrade exited 0")
+
+    def test_issue_review_handler_uses_llm_task_statuses(self) -> None:
+        class FakeClient:
+            def __init__(self, **kwargs):
+                pass
+
+            def chat(self, *args, **kwargs):
+                return '{"tasks":[{"title":"wol failed","status":"still_open","reason":"No service evidence changed"}]}'
+
+        with patch("linux_troubleshoot_agent.web.LlamaCppClient", FakeClient):
+            response = handle_issue_review(
+                {
+                    "issues": [{"title": "wol failed", "detail": "service failed"}],
+                    "evidence": {"command": "true"},
+                }
+            )
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["tasks"][0]["status"], "still_open")
+
 
 class StaticConfigurationTests(unittest.TestCase):
     def test_docker_defaults_bind_privileged_gui_to_localhost(self) -> None:
@@ -508,9 +522,12 @@ class StaticConfigurationTests(unittest.TestCase):
         self.assertIn("live-thinking", html)
         self.assertIn("Thinking tokens (~", html)
         self.assertIn("live.thinkingPre.textContent", html)
-        self.assertIn("function refreshIssuesAfterChange(label)", html)
-        self.assertIn("basePayload({ analyze: false })", html)
-        self.assertIn("Change applied. Running read-only verification scan", html)
+        self.assertIn("Issue Tasks", html)
+        self.assertIn("function reviewIssuesAfterChange(evidence)", html)
+        self.assertIn('post("/api/review-issues"', html)
+        self.assertIn("LLM is reviewing issue tasks", html)
+        self.assertNotIn("function refreshIssuesAfterChange(label)", html)
+        self.assertNotIn("basePayload({ analyze: false })", html)
 
     def test_streaming_client_preserves_reasoning_deltas(self) -> None:
         source = Path("src/linux_troubleshoot_agent/llama_cpp_client.py").read_text(

@@ -4,6 +4,7 @@ import argparse
 import hmac
 import json
 import os
+import re
 import secrets
 import shlex
 import urllib.parse
@@ -144,6 +145,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/export":
                 self._send_json(handle_export(payload))
+                return
+            if self.path == "/api/review-issues":
+                self._send_json(handle_issue_review(payload))
                 return
             self.send_error(HTTPStatus.NOT_FOUND)
         except LlamaCppError as exc:
@@ -491,9 +495,6 @@ def handle_scan(payload: dict[str, Any]) -> dict[str, Any]:
         }
     ]
 
-    if payload.get("analyze") is False:
-        return {"ok": True, "session_id": session_id, "events": events, "memory": memory}
-
     session.agent.add_user_message(
         "Analyze this automatic Linux system scan. Keep the answer short, rank likely issues, "
         "and do not suggest modifying commands unless permissions are enabled.\n\n"
@@ -634,6 +635,73 @@ def handle_export(payload: dict[str, Any]) -> dict[str, Any]:
         content = memory
     append_audit({"kind": "export", "action": "downloaded", "type": export_type})
     return {"ok": True, "type": export_type, "content": content}
+
+
+def handle_issue_review(payload: dict[str, Any]) -> dict[str, Any]:
+    issues = payload.get("issues") or []
+    evidence = payload.get("evidence") or {}
+    if not isinstance(issues, list) or not issues:
+        return {"ok": True, "tasks": []}
+
+    env_config = Config.from_env()
+    base_url = str(payload.get("base_url") or env_config.base_url).strip()
+    model = str(payload.get("model") or env_config.model).strip()
+    api_key = str(payload.get("api_key") or "").strip() or env_config.api_key
+    client = LlamaCppClient(base_url=base_url, model=model, api_key=api_key)
+    prompt = (
+        "You are reviewing Linux troubleshooting issue tasks after a user-approved action. "
+        "Do not invent fresh system state. Decide from the evidence whether each issue is fixed, "
+        "probably_fixed, still_open, or needs_verification. Return only JSON in this shape: "
+        "{\"tasks\":[{\"title\":\"same title\",\"status\":\"fixed|probably_fixed|still_open|needs_verification\","
+        "\"reason\":\"short reason\"}]}.\n\n"
+        f"Issues:\n{json.dumps(issues, indent=2)}\n\n"
+        f"Evidence:\n{json.dumps(evidence, indent=2)}"
+    )
+    raw = client.chat(
+        [{"role": "user", "content": prompt}],
+        max_tokens=512,
+        temperature=0.1,
+        top_p=0.9,
+        top_k=40,
+        repeat_penalty=1.05,
+    )
+    tasks = _parse_issue_review(raw, issues)
+    append_audit({"kind": "issue_review", "action": "llm_reviewed", "task_count": len(tasks)})
+    return {"ok": True, "tasks": tasks, "raw": raw}
+
+
+def _parse_issue_review(raw: str, issues: list[Any]) -> list[dict[str, str]]:
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", raw, flags=re.DOTALL)
+        if not match:
+            payload = {}
+        else:
+            try:
+                payload = json.loads(match.group(0))
+            except json.JSONDecodeError:
+                payload = {}
+
+    returned = payload.get("tasks") if isinstance(payload, dict) else []
+    returned_by_title = {
+        str(item.get("title", "")).strip(): item
+        for item in returned
+        if isinstance(item, dict) and item.get("title")
+    }
+    allowed = {"fixed", "probably_fixed", "still_open", "needs_verification"}
+    tasks: list[dict[str, str]] = []
+    for issue in issues[:20]:
+        if not isinstance(issue, dict):
+            continue
+        title = str(issue.get("title") or "Issue")
+        reviewed = returned_by_title.get(title, {})
+        status = str(reviewed.get("status") or "needs_verification").strip().lower()
+        if status not in allowed:
+            status = "needs_verification"
+        reason = str(reviewed.get("reason") or issue.get("next_step") or issue.get("detail") or "").strip()
+        tasks.append({"title": title, "status": status, "reason": reason[:240]})
+    return tasks
 
 
 def _declined_action_response(session_id: str, content: str) -> dict[str, Any]:

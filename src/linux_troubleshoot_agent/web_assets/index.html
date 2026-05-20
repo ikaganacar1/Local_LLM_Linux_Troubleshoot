@@ -144,6 +144,29 @@
       display: grid;
       gap: 9px;
     }
+    details.rail-card {
+      display: block;
+    }
+    details.rail-card > summary {
+      list-style: none;
+      cursor: pointer;
+      margin: -2px 0 9px;
+    }
+    details.rail-card > summary::-webkit-details-marker {
+      display: none;
+    }
+    details.rail-card > summary::after {
+      content: "▾";
+      float: right;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    details.rail-card:not([open]) > summary {
+      margin-bottom: 0;
+    }
+    details.rail-card:not([open]) > summary::after {
+      content: "▸";
+    }
     .rail-title {
       color: var(--muted);
       font-size: 11px;
@@ -409,6 +432,11 @@
       display: block;
       margin-bottom: 5px;
     }
+    .issue.fixed { border-left: 4px solid var(--green); }
+    .issue.probably_fixed { border-left: 4px solid var(--blue); }
+    .issue.still_open { border-left: 4px solid var(--red); }
+    .issue.needs_verification,
+    .issue.open { border-left: 4px solid var(--amber); }
     .mini {
       color: var(--muted);
       font-size: 12px;
@@ -627,8 +655,8 @@
         <h1 class="brand-title">Linux Troubleshooting Agent</h1>
         <div class="brand-subtitle">Local LLM maintenance console</div>
       </div>
-      <div class="rail-card">
-        <div class="rail-title">Actions</div>
+      <details class="rail-card" open>
+        <summary class="rail-title">Actions</summary>
         <div class="rail-actions">
           <button id="scan" class="primary wide" type="button">Scan System</button>
           <button id="checkUpdates" class="secondary" type="button">Updates</button>
@@ -636,9 +664,9 @@
           <button id="previewOrganize" class="secondary" type="button">Plan</button>
           <button id="applyOrganize" class="secondary" type="button">Organize</button>
         </div>
-      </div>
-      <div class="rail-card">
-        <div class="rail-title">Workflows</div>
+      </details>
+      <details class="rail-card" open>
+        <summary class="rail-title">Workflows</summary>
         <div class="workflow-actions">
           <button class="secondary workflow" type="button" data-workflow="display">Display</button>
           <button class="secondary workflow" type="button" data-workflow="audio">Audio</button>
@@ -649,29 +677,29 @@
           <button class="secondary workflow" type="button" data-workflow="storage">Storage</button>
           <button class="secondary workflow" type="button" data-workflow="bluetooth">Bluetooth</button>
         </div>
-      </div>
-      <div class="rail-card">
-        <div class="rail-title">Issues</div>
+      </details>
+      <details class="rail-card" open>
+        <summary class="rail-title">Issue Tasks</summary>
         <div id="issueDashboard" class="issue-dashboard mini">No scan yet.</div>
-      </div>
-      <div class="rail-card">
-        <div class="rail-title">Chats</div>
+      </details>
+      <details class="rail-card" open>
+        <summary class="rail-title">Chats</summary>
         <button id="newChat" class="secondary" type="button">New Chat</button>
         <button id="scrollBottom" class="secondary" type="button">Bottom</button>
         <div id="historyList" class="history-list"></div>
-      </div>
-      <div class="rail-card">
-        <div class="rail-title">Export</div>
+      </details>
+      <details class="rail-card">
+        <summary class="rail-title">Export</summary>
         <div class="rail-actions">
           <button id="exportAudit" class="secondary" type="button">Audit</button>
           <button id="exportProfile" class="secondary" type="button">Profile</button>
         </div>
-      </div>
+      </details>
       <button id="openSettings" class="secondary" type="button">Settings</button>
-      <div class="rail-card">
-        <div class="rail-title">Memory</div>
+      <details class="rail-card">
+        <summary class="rail-title">Memory</summary>
         <div id="memory" class="memory-card">Loading</div>
-      </div>
+      </details>
     </aside>
   </div>
 
@@ -794,6 +822,7 @@
     let currentChatId = null;
     let chats = {};
     let currentContextSize = Number(localStorage.getItem("lta-context-size") || "0") || null;
+    let issueTasks = [];
 
     function nearBottom() {
       return workspace.scrollHeight - workspace.scrollTop - workspace.clientHeight < 120;
@@ -1535,23 +1564,42 @@
       issueDashboard.classList.remove("stale");
       const issues = summary?.issues || [];
       if (!issues.length) {
+        issueTasks = [];
         issueDashboard.textContent = "No obvious issues detected.";
         return;
       }
-      for (const issue of issues.slice(0, 6)) {
+      issueTasks = issues.slice(0, 8).map((issue) => ({
+        title: issue.title || "Issue",
+        severity: issue.severity || "info",
+        status: "open",
+        reason: issue.next_step || issue.detail || "",
+        detail: issue.detail || ""
+      }));
+      renderIssueTasks();
+    }
+
+    function renderIssueTasks() {
+      issueDashboard.textContent = "";
+      issueDashboard.classList.remove("stale");
+      if (!issueTasks.length) {
+        issueDashboard.textContent = "No issue tasks.";
+        return;
+      }
+      for (const task of issueTasks) {
         const card = document.createElement("div");
-        card.className = `issue ${String(issue.severity || "low").toLowerCase()}`;
+        const status = String(task.status || "open").toLowerCase();
+        card.className = `issue ${status}`;
         const title = document.createElement("strong");
-        title.textContent = `${issue.severity || "info"}: ${issue.title || "Issue"}`;
+        title.textContent = `${status.replaceAll("_", " ")}: ${task.title || "Issue"}`;
         const detail = document.createElement("div");
-        detail.textContent = issue.next_step || issue.detail || "";
+        detail.textContent = task.reason || task.detail || "";
         card.append(title, detail);
         issueDashboard.appendChild(card);
       }
     }
 
-    function markIssuesStale(reason) {
-      issueDashboard.textContent = reason || "A change was applied. Running a verification scan will refresh this list.";
+    function markIssuesReviewing(reason) {
+      issueDashboard.textContent = reason || "LLM is reviewing issue tasks from the action evidence...";
       issueDashboard.classList.add("stale");
     }
 
@@ -1741,8 +1789,8 @@
         if (confirmed !== undefined) payload.confirmed = confirmed;
         const data = await post("/api/action", basePayload(payload));
         handleResponse(data);
-        if (shouldVerifyAfterAction(action, confirmed, data)) {
-          await refreshIssuesAfterChange("Verifying action result");
+        if (shouldReviewIssuesAfterAction(action, confirmed, data)) {
+          await reviewIssuesAfterChange({ action, events: summarizedEvents(data.events || []) });
         }
       } catch (error) {
         addEntry("blocked", "Error", String(error.message || error));
@@ -1751,7 +1799,7 @@
       }
     }
 
-    function shouldVerifyAfterAction(action, confirmed, data) {
+    function shouldReviewIssuesAfterAction(action, confirmed, data) {
       if (!data?.ok) return false;
       if (confirmed === false) return false;
       if (action === "apply_updates") return hasSuccessfulCommandResult(data);
@@ -1763,17 +1811,41 @@
       return (data.events || []).some((event) => event.type === "command_result" && Number(event.exit_code) === 0);
     }
 
-    async function refreshIssuesAfterChange(label) {
-      markIssuesStale("Change applied. Running read-only verification scan...");
-      const data = await post("/api/scan", basePayload({ analyze: false }));
+    function summarizedEvents(events) {
+      return events.map((event) => {
+        if (event.type === "command_result") {
+          return {
+            type: event.type,
+            command: event.command,
+            exit_code: event.exit_code,
+            timed_out: event.timed_out,
+            stdout: String(event.stdout || "").slice(0, 1600),
+            stderr: String(event.stderr || "").slice(0, 800)
+          };
+        }
+        return event;
+      });
+    }
+
+    async function reviewIssuesAfterChange(evidence) {
+      if (!issueTasks.length) return;
+      markIssuesReviewing("Action completed. LLM is reviewing issue task status...");
+      const data = await post("/api/review-issues", basePayload({
+        issues: issueTasks,
+        evidence
+      }));
       if (!data.ok) {
-        markIssuesStale("Change applied. Verification scan could not refresh issues.");
-        addEntry("warn", "Verification Scan", data.error || "Scan failed.", null, { persist: false });
+        markIssuesReviewing("Action completed. LLM review could not update issue tasks.");
+        addEntry("warn", "Issue Review", data.error || "Review failed.", null, { persist: false });
         return;
       }
-      handleResponse(data);
-      if (data.memory) renderMemory(data.memory);
-      addEntry("agent", "Verification Scan", label || "Issues refreshed from a new read-only scan.", null, { persist: false });
+      const reviewed = data.tasks || [];
+      issueTasks = issueTasks.map((task) => {
+        const match = reviewed.find((item) => item.title === task.title);
+        return match ? { ...task, status: match.status || task.status, reason: match.reason || task.reason } : task;
+      });
+      renderIssueTasks();
+      addEntry("agent", "Issue Review", "LLM reviewed issue task status from the action evidence. Run Scan System when you want fresh system evidence.", null, { persist: false });
     }
 
     function handleResponse(data) {
@@ -1933,7 +2005,7 @@
         const data = await post("/api/approve", { session_id: sessionId, approved });
         handleResponse(data);
         if (approved && hasSuccessfulCommandResult(data)) {
-          await refreshIssuesAfterChange("Issues refreshed after approved command.");
+          await reviewIssuesAfterChange({ action: "approved_command", events: summarizedEvents(data.events || []) });
         }
       } catch (error) {
         addEntry("blocked", "Error", String(error.message || error));
