@@ -216,6 +216,11 @@
       border-color: var(--amber) !important;
       color: var(--amber);
     }
+    .issue-dashboard.stale {
+      border-left: 3px solid var(--amber);
+      padding-left: 8px;
+      color: var(--amber);
+    }
     .workspace {
       min-height: 0;
       height: 100%;
@@ -1435,6 +1440,7 @@
 
     function renderIssueDashboard(summary) {
       issueDashboard.textContent = "";
+      issueDashboard.classList.remove("stale");
       const issues = summary?.issues || [];
       if (!issues.length) {
         issueDashboard.textContent = "No obvious issues detected.";
@@ -1450,6 +1456,11 @@
         card.append(title, detail);
         issueDashboard.appendChild(card);
       }
+    }
+
+    function markIssuesStale(reason) {
+      issueDashboard.textContent = reason || "A change was applied. Running a verification scan will refresh this list.";
+      issueDashboard.classList.add("stale");
     }
 
     function renderPlan(plan) {
@@ -1638,11 +1649,39 @@
         if (confirmed !== undefined) payload.confirmed = confirmed;
         const data = await post("/api/action", basePayload(payload));
         handleResponse(data);
+        if (shouldVerifyAfterAction(action, confirmed, data)) {
+          await refreshIssuesAfterChange("Verifying action result");
+        }
       } catch (error) {
         addEntry("blocked", "Error", String(error.message || error));
       } finally {
         setBusy(false);
       }
+    }
+
+    function shouldVerifyAfterAction(action, confirmed, data) {
+      if (!data?.ok) return false;
+      if (confirmed === false) return false;
+      if (action === "apply_updates") return hasSuccessfulCommandResult(data);
+      if (action === "organize_apply") return (data.events || []).some((event) => event.type === "organize_result");
+      return false;
+    }
+
+    function hasSuccessfulCommandResult(data) {
+      return (data.events || []).some((event) => event.type === "command_result" && Number(event.exit_code) === 0);
+    }
+
+    async function refreshIssuesAfterChange(label) {
+      markIssuesStale("Change applied. Running read-only verification scan...");
+      const data = await post("/api/scan", basePayload({ analyze: false }));
+      if (!data.ok) {
+        markIssuesStale("Change applied. Verification scan could not refresh issues.");
+        addEntry("warn", "Verification Scan", data.error || "Scan failed.", null, { persist: false });
+        return;
+      }
+      handleResponse(data);
+      if (data.memory) renderMemory(data.memory);
+      addEntry("agent", "Verification Scan", label || "Issues refreshed from a new read-only scan.", null, { persist: false });
     }
 
     function handleResponse(data) {
@@ -1801,6 +1840,9 @@
       try {
         const data = await post("/api/approve", { session_id: sessionId, approved });
         handleResponse(data);
+        if (approved && hasSuccessfulCommandResult(data)) {
+          await refreshIssuesAfterChange("Issues refreshed after approved command.");
+        }
       } catch (error) {
         addEntry("blocked", "Error", String(error.message || error));
       } finally {

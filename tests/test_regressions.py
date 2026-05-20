@@ -30,6 +30,7 @@ from linux_troubleshoot_agent.web import (
     handle_export,
     handle_login,
     handle_model_defaults,
+    handle_scan,
 )
 
 
@@ -319,6 +320,21 @@ class WebRegressionTests(unittest.TestCase):
         self.assertEqual(response["events"][1]["content"], "Network summary")
         self.assertEqual(load_memory()["audit"][-1]["kind"], "workflow")
 
+    def test_scan_can_skip_llm_analysis_for_verification_refresh(self) -> None:
+        with (
+            patch("linux_troubleshoot_agent.web.run_system_scan") as scan,
+            patch("linux_troubleshoot_agent.web._continue_session") as continued,
+        ):
+            scan.return_value = {
+                "summary": {"package_manager": "apt", "issues": []},
+                "results": {},
+            }
+            response = handle_scan({"session_id": "verify-scan", "analyze": False})
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["events"][0]["type"], "scan_summary")
+        continued.assert_not_called()
+
     def test_blank_llm_parameters_mean_server_defaults(self) -> None:
         self.assertIsNone(_optional_int_payload({"max_tokens": None}, "max_tokens", 4096))
         self.assertIsNone(_optional_float_payload({"temperature": ""}, "temperature", 0.2))
@@ -489,6 +505,9 @@ class StaticConfigurationTests(unittest.TestCase):
         self.assertIn("form.requestSubmit()", html)
         self.assertIn("function splitThinkingBlocks(text)", html)
         self.assertIn("thinking-details", html)
+        self.assertIn("function refreshIssuesAfterChange(label)", html)
+        self.assertIn("basePayload({ analyze: false })", html)
+        self.assertIn("Change applied. Running read-only verification scan", html)
 
 
 if __name__ == "__main__":

@@ -491,6 +491,9 @@ def handle_scan(payload: dict[str, Any]) -> dict[str, Any]:
         }
     ]
 
+    if payload.get("analyze") is False:
+        return {"ok": True, "session_id": session_id, "events": events, "memory": memory}
+
     session.agent.add_user_message(
         "Analyze this automatic Linux system scan. Keep the answer short, rank likely issues, "
         "and do not suggest modifying commands unless permissions are enabled.\n\n"
