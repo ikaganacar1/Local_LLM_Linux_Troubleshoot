@@ -104,6 +104,29 @@ Scans include suggested repair plans. These plans are guidance only; commands th
 
 For commands that use `sudo`, launch the GUI from a terminal so password prompts are visible if your sudo session is not already authenticated.
 
+## Tests
+
+Run normal offline regression tests:
+
+```bash
+PYTHONPATH=src python3 -m unittest discover -s tests
+```
+
+Run live backend/LLM integration tests separately after Docker and llama.cpp are running:
+
+```bash
+PYTHONPATH=src python3 -m unittest discover -s integration_tests
+```
+
+Useful live-test overrides:
+
+```bash
+LTA_APP_URL=http://127.0.0.1:28765 \
+LTA_LLAMA_BASE_URL=http://127.0.0.1:11435/v1 \
+LTA_LIVE_MODEL=Qwen3-Coder-Next-UD-IQ3_XXS \
+PYTHONPATH=src python3 -m unittest discover -s integration_tests
+```
+
 ## CLI
 
 Run the terminal agent:
