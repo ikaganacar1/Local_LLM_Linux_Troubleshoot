@@ -13,9 +13,10 @@ from unittest.mock import patch
 from linux_troubleshoot_agent.safety import SafetyDecision, classify_command
 from linux_troubleshoot_agent.shell import run_command
 from linux_troubleshoot_agent.storage import PermissionSettings, auth_token, load_memory, save_settings
-from linux_troubleshoot_agent.system_scan import summarize_scan, update_check_command
+from linux_troubleshoot_agent.system_scan import recommend_repairs, summarize_scan, update_check_command
 from linux_troubleshoot_agent.web import (
     Handler,
+    PASSWORD_SESSIONS,
     SESSIONS,
     WebSession,
     _index_asset,
@@ -25,6 +26,8 @@ from linux_troubleshoot_agent.web import (
     _service_change_allowed,
     handle_approval,
     handle_action,
+    handle_export,
+    handle_login,
     handle_model_defaults,
 )
 
@@ -156,12 +159,14 @@ class WebRegressionTests(unittest.TestCase):
     def setUp(self) -> None:
         self._old_data_dir = os.environ.get("LTA_DATA_DIR")
         self._old_host_home = os.environ.get("LTA_HOST_HOME")
+        self._old_ui_password = os.environ.get("LTA_UI_PASSWORD")
         self._tmp = tempfile.TemporaryDirectory()
         root = Path(self._tmp.name)
         os.environ["LTA_DATA_DIR"] = str(root / "data")
         os.environ["LTA_HOST_HOME"] = str(root / "home")
         Path(os.environ["LTA_HOST_HOME"]).mkdir()
         SESSIONS.clear()
+        PASSWORD_SESSIONS.clear()
 
     def tearDown(self) -> None:
         SESSIONS.clear()
@@ -173,6 +178,10 @@ class WebRegressionTests(unittest.TestCase):
             os.environ.pop("LTA_HOST_HOME", None)
         else:
             os.environ["LTA_HOST_HOME"] = self._old_host_home
+        if self._old_ui_password is None:
+            os.environ.pop("LTA_UI_PASSWORD", None)
+        else:
+            os.environ["LTA_UI_PASSWORD"] = self._old_ui_password
         self._tmp.cleanup()
 
     def test_action_skip_declines_confirmation_instead_of_reprompting(self) -> None:
@@ -278,19 +287,25 @@ class WebRegressionTests(unittest.TestCase):
         self.assertEqual(response["parameters"]["temperature"], 0.45)
 
     def test_workflow_action_returns_structured_scan_and_audit(self) -> None:
-        with patch("linux_troubleshoot_agent.web.run_workflow_scan") as scan:
+        with (
+            patch("linux_troubleshoot_agent.web.run_workflow_scan") as scan,
+            patch("linux_troubleshoot_agent.web._continue_session") as continued,
+        ):
             scan.return_value = {
                 "summary": {
                     "workflow": "network",
                     "package_manager": "apt",
                     "issues": [{"severity": "medium", "title": "Network issue"}],
+                    "repair_plans": [],
                 },
                 "results": {"network": {"stdout": "ok", "stderr": "", "exit_code": 0}},
             }
+            continued.return_value = [{"type": "message", "content": "Network summary"}]
             response = handle_action({"session_id": "workflow-test", "action": "workflow_network"})
 
         self.assertTrue(response["ok"])
         self.assertEqual(response["events"][0]["type"], "workflow_summary")
+        self.assertEqual(response["events"][1]["content"], "Network summary")
         self.assertEqual(load_memory()["audit"][-1]["kind"], "workflow")
 
     def test_blank_llm_parameters_mean_server_defaults(self) -> None:
@@ -354,6 +369,40 @@ class WebRegressionTests(unittest.TestCase):
         self.assertNotIn("/boot", disk_issues[0]["detail"])
         self.assertIn("/", disk_issues[0]["detail"])
         self.assertIn("wol@enp11s0.service", summary["failed_services"])
+        self.assertTrue(summary["repair_plans"])
+        self.assertIn("wol@enp11s0.service", "\n".join(summary["repair_plans"][0]["commands"]))
+
+    def test_repair_plans_include_distro_update_command(self) -> None:
+        plans = recommend_repairs(
+            [{"severity": "medium", "title": "Package updates available"}],
+            {},
+            "apt",
+        )
+
+        commands = "\n".join(plans[0]["commands"])
+        self.assertIn("apt list --upgradable", commands)
+        self.assertIn("sudo apt update && sudo apt upgrade -y", commands)
+
+    def test_export_returns_profile_or_audit_json(self) -> None:
+        load_memory()
+        first = handle_export({"type": "profile"})
+        second = handle_export({"type": "audit"})
+
+        self.assertTrue(first["ok"])
+        self.assertIn("facts", first["content"])
+        self.assertTrue(second["ok"])
+        self.assertIn("audit", second["content"])
+        self.assertGreaterEqual(len(load_memory()["audit"]), 2)
+
+    def test_optional_ui_password_issues_session_token(self) -> None:
+        os.environ["LTA_UI_PASSWORD"] = "secret"
+
+        failed = handle_login({"password": "wrong"})
+        passed = handle_login({"password": "secret"})
+
+        self.assertFalse(failed["ok"])
+        self.assertTrue(passed["ok"])
+        self.assertIn(passed["login_token"], PASSWORD_SESSIONS)
 
 
 class StaticConfigurationTests(unittest.TestCase):
@@ -416,6 +465,11 @@ class StaticConfigurationTests(unittest.TestCase):
         self.assertIn('id="issueDashboard"', html)
         self.assertIn('data-workflow="network"', html)
         self.assertIn("function renderPlan(plan)", html)
+        self.assertIn("function renderRepairPlans(plans)", html)
+        self.assertIn('id="exportAudit"', html)
+        self.assertIn('post("/api/export"', html)
+        self.assertIn('id="loginDialog"', html)
+        self.assertIn('post("/api/login"', html)
         self.assertIn("runWorkflow(button.dataset.workflow)", html)
 
 

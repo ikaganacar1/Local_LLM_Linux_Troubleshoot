@@ -118,6 +118,7 @@ def summarize_scan(results: dict[str, dict[str, Any]], package_manager: str | No
     kernel = first_line(results.get("kernel", {}).get("stdout", ""))
     issues = detect_issues(results, package_manager)
     profile = infer_profile(results, issues, package_manager)
+    repair_plans = recommend_repairs(issues, profile, package_manager)
     return {
         "os_id": os_info.get("ID"),
         "os_name": os_info.get("PRETTY_NAME") or os_info.get("NAME"),
@@ -125,6 +126,7 @@ def summarize_scan(results: dict[str, dict[str, Any]], package_manager: str | No
         "kernel": kernel,
         "package_manager": package_manager,
         "issues": issues,
+        "repair_plans": repair_plans,
         **profile,
     }
 
@@ -326,6 +328,114 @@ def count_updates(package_manager: str | None, stdout: str, exit_code: int) -> i
     if package_manager == "dnf":
         return max(0, len([line for line in lines if not line.startswith(("Last metadata", "Security:"))]))
     return len(lines)
+
+
+def recommend_repairs(
+    issues: list[dict[str, str]],
+    profile: dict[str, Any],
+    package_manager: str | None,
+) -> list[dict[str, Any]]:
+    plans: list[dict[str, Any]] = []
+    titles = {issue.get("title", "") for issue in issues}
+    failed_services = profile.get("failed_services") or []
+
+    if "Failed systemd services" in titles:
+        service = failed_services[0] if failed_services else "<service>"
+        plans.append(
+            {
+                "title": "Investigate failed service",
+                "risk": "low",
+                "why": "Collect service status and boot logs before changing service state.",
+                "steps": [
+                    "Open the failed unit status.",
+                    "Read the current boot journal for the same unit.",
+                    "Only restart or disable the unit after the failure reason is clear.",
+                ],
+                "commands": [
+                    f"systemctl status {service} --no-pager",
+                    f"journalctl -u {service} -b --no-pager -n 120",
+                ],
+            }
+        )
+
+    if "Package updates available" in titles:
+        check = update_check_command(package_manager)
+        apply = update_apply_command(package_manager)
+        plans.append(
+            {
+                "title": "Review package updates",
+                "risk": "medium",
+                "why": f"{package_manager or 'The package manager'} reports pending updates.",
+                "steps": [
+                    "Run the read-only update check first.",
+                    "Apply updates only when package update permission is enabled.",
+                    "Run the update check again after the package manager finishes.",
+                ],
+                "commands": [command for command in (check, apply) if command],
+            }
+        )
+
+    if "Filesystem nearly full" in titles:
+        plans.append(
+            {
+                "title": "Find disk usage safely",
+                "risk": "low",
+                "why": "Identify large directories before deleting caches or files.",
+                "steps": [
+                    "Check filesystem usage.",
+                    "Inspect large directories on the same filesystem.",
+                    "Delete only known cache or duplicate data after review.",
+                ],
+                "commands": ["df -hT", "du -xhd1 ~"],
+            }
+        )
+
+    if "Recent boot errors in journal" in titles:
+        plans.append(
+            {
+                "title": "Group boot errors",
+                "risk": "low",
+                "why": "Repeated journal errors usually point to one root cause.",
+                "steps": [
+                    "Read recent high-priority boot logs.",
+                    "Search for the repeated service, driver, or device name.",
+                    "Run the matching workflow for that subsystem.",
+                ],
+                "commands": ["journalctl -p 3 -xb --no-pager -n 120"],
+            }
+        )
+
+    if "Pacman package integrity warnings" in titles:
+        plans.append(
+            {
+                "title": "Verify pacman package files",
+                "risk": "low",
+                "why": "Integrity warnings should be narrowed to the affected package before reinstalling.",
+                "steps": [
+                    "Review package integrity warnings.",
+                    "Identify the package that owns the missing or changed file.",
+                    "Reinstall only the affected package if the warning is not expected.",
+                ],
+                "commands": ["pacman -Qk", "pacman -Qo <path>"],
+            }
+        )
+
+    if "APT repository signature problem" in titles:
+        plans.append(
+            {
+                "title": "Fix APT repository trust",
+                "risk": "medium",
+                "why": "APT should not install updates until repository signatures validate.",
+                "steps": [
+                    "Read the exact NO_PUBKEY or EXPKEYSIG line.",
+                    "Identify the repository that owns the failing key.",
+                    "Refresh that repository key using the vendor's current instructions.",
+                ],
+                "commands": ["apt update"],
+            }
+        )
+
+    return plans[:6]
 
 
 def parse_os_release(text: str) -> dict[str, str]:

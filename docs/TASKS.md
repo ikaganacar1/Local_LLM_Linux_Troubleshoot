@@ -14,10 +14,14 @@ Completed implementation checklist:
 - [x] llama.cpp model defaults loaded from `/props`.
 - [x] Editable LLM parameters with blank values meaning server defaults.
 - [x] UI rendering for workflow summaries and safer confirmations.
+- [x] Optional `LTA_UI_PASSWORD` lock for the local browser console.
+- [x] Distro-aware repair plans attached to scan and workflow summaries.
+- [x] Per-workflow model prompts for focused subsystem analysis.
+- [x] Exportable audit and profile JSON from the GUI.
 
 Follow-up hardening candidates:
 
-- [ ] Optional user-set password before serving the UI.
-- [ ] More distro-specific repair plans.
-- [ ] Per-workflow model prompts tuned for each subsystem.
-- [ ] Exportable audit log view.
+- [ ] Optional password management inside the settings dialog.
+- [ ] More distro-specific repair plans for Fedora, openSUSE, and Alpine edge cases.
+- [ ] One-click copy buttons for suggested diagnostic commands.
+- [ ] Import/export of complete chat history.

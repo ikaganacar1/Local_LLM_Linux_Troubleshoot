@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hmac
 import json
+import os
 import secrets
 import shlex
 import urllib.parse
@@ -51,6 +52,7 @@ class WebSession:
 
 
 SESSIONS: dict[str, WebSession] = {}
+PASSWORD_SESSIONS: set[str] = set()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -87,9 +89,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send_bytes(_index_asset(), "text/html; charset=utf-8")
             return
         if self.path == "/api/state":
+            if _password_required() and not self._password_authorized():
+                self._send_json({"ok": False, "password_required": True, "error": "UI password required."}, HTTPStatus.UNAUTHORIZED)
+                return
             self._send_json(
                 {
                     "ok": True,
+                    "password_required": _password_required(),
                     "settings": _settings_dict(load_settings()),
                     "memory": load_memory(),
                 }
@@ -103,6 +109,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "error": "Unauthorized local request."}, HTTPStatus.FORBIDDEN)
                 return
             payload = self._read_json()
+            if self.path == "/api/login":
+                self._send_json(handle_login(payload))
+                return
+            if _password_required() and not self._password_authorized():
+                self._send_json({"ok": False, "password_required": True, "error": "UI password required."}, HTTPStatus.UNAUTHORIZED)
+                return
             if self.path == "/api/message-stream":
                 self._send_message_stream(payload)
                 return
@@ -129,6 +141,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/title":
                 self._send_json(handle_title(payload))
+                return
+            if self.path == "/api/export":
+                self._send_json(handle_export(payload))
                 return
             self.send_error(HTTPStatus.NOT_FOUND)
         except LlamaCppError as exc:
@@ -179,6 +194,12 @@ class Handler(BaseHTTPRequestHandler):
     def _authorized(self) -> bool:
         supplied = self.headers.get("X-LTA-Token", "")
         return hmac.compare_digest(supplied, auth_token())
+
+    def _password_authorized(self) -> bool:
+        if not _password_required():
+            return True
+        supplied = self.headers.get("X-LTA-Login", "")
+        return bool(supplied and supplied in PASSWORD_SESSIONS)
 
     def _trusted_origin(self) -> bool:
         origin = self.headers.get("Origin") or self.headers.get("Referer")
@@ -364,6 +385,18 @@ def handle_title(payload: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "title": title[:64] or "Troubleshooting Chat"}
 
 
+def handle_login(payload: dict[str, Any]) -> dict[str, Any]:
+    expected = _ui_password()
+    if not expected:
+        return {"ok": True, "password_required": False, "login_token": ""}
+    supplied = str(payload.get("password") or "")
+    if not hmac.compare_digest(supplied, expected):
+        return {"ok": False, "password_required": True, "error": "Wrong password."}
+    login_token = secrets.token_urlsafe(32)
+    PASSWORD_SESSIONS.add(login_token)
+    return {"ok": True, "password_required": True, "login_token": login_token}
+
+
 def handle_approval(payload: dict[str, Any]) -> dict[str, Any]:
     session_id = str(payload.get("session_id", ""))
     session = SESSIONS.get(session_id)
@@ -503,10 +536,16 @@ def handle_action(payload: dict[str, Any]) -> dict[str, Any]:
         scan = run_workflow_scan(workflow, session.agent.config.timeout_seconds)
         memory = remember_scan(scan["summary"])
         append_audit({"kind": "workflow", "action": "run", "name": workflow})
+        events = [{"type": "workflow_summary", "workflow": workflow, "summary": scan["summary"], "results": scan["results"]}]
+        session.agent.add_user_message(_workflow_analysis_prompt(workflow, scan["summary"]))
+        try:
+            events.extend(_continue_session(session))
+        except LlamaCppError as exc:
+            events.append({"type": "notice", "content": f"Workflow completed. Model summary skipped: {exc}"})
         return {
             "ok": True,
             "session_id": session_id,
-            "events": [{"type": "workflow_summary", "workflow": workflow, "summary": scan["summary"], "results": scan["results"]}],
+            "events": events,
             "memory": memory,
         }
 
@@ -549,12 +588,57 @@ def handle_action(payload: dict[str, Any]) -> dict[str, Any]:
     return {"ok": False, "session_id": session_id, "error": f"Unknown action: {action}"}
 
 
+def handle_export(payload: dict[str, Any]) -> dict[str, Any]:
+    export_type = str(payload.get("type") or "memory").strip()
+    memory = load_memory()
+    if export_type == "audit":
+        content = {"audit": memory.get("audit", [])}
+    elif export_type == "profile":
+        content = {
+            "facts": memory.get("facts", {}),
+            "profile": memory.get("profile", {}),
+            "scan_history": memory.get("scan_history", []),
+        }
+    else:
+        export_type = "memory"
+        content = memory
+    append_audit({"kind": "export", "action": "downloaded", "type": export_type})
+    return {"ok": True, "type": export_type, "content": content}
+
+
 def _declined_action_response(session_id: str, content: str) -> dict[str, Any]:
     return {
         "ok": True,
         "session_id": session_id,
         "events": [{"type": "notice", "content": content}],
     }
+
+
+def _workflow_analysis_prompt(workflow: str, summary: dict[str, Any]) -> str:
+    focus = {
+        "display": "GPU, DRM, Wayland, X11, monitor detection, and compositor evidence",
+        "audio": "PipeWire, WirePlumber, PulseAudio compatibility, ALSA devices, and default sinks",
+        "network": "interfaces, routes, NetworkManager state, DNS symptoms, and link state",
+        "services": "failed units, boot journal errors, timers, and whether a unit is harmless or important",
+        "packages": "package updates, integrity warnings, locks, repository trust, and package-manager-specific next steps",
+        "boot": "kernel, boot warnings, systemd timing, and repeated boot blockers",
+        "storage": "filesystem usage, block devices, mounts, and safe cleanup order",
+        "bluetooth": "Bluetooth service state, controller visibility, USB devices, and audio profile hints",
+    }.get(workflow, "the selected subsystem")
+    return (
+        f"Analyze this {workflow} workflow scan. Focus on {focus}. "
+        "Keep the answer concise, rank likely causes, and use the repair_plans as guidance. "
+        "Do not suggest modifying commands unless permissions are enabled.\n\n"
+        + json.dumps(summary, indent=2)
+    )
+
+
+def _ui_password() -> str:
+    return str(os.environ.get("LTA_UI_PASSWORD") or "")
+
+
+def _password_required() -> bool:
+    return bool(_ui_password())
 
 
 def _get_or_create_session(payload: dict[str, Any]) -> tuple[str, WebSession]:

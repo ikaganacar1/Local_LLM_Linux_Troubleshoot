@@ -49,9 +49,15 @@ The GUI defaults to dark mode and streams LLM output into the chat as tokens arr
 - action permissions
 - light/dark mode
 
+Set an optional local UI password before launching if you want the browser console locked:
+
+```bash
+export LTA_UI_PASSWORD='choose-a-local-password'
+```
+
 Chats are kept in browser local storage, restored after page refresh, and listed in the right-side chat history. New chats are automatically named from the first message with a local LLM-generated title when available.
 
-The GUI also includes a workflow rail and issue dashboard. Workflow buttons run focused read-only diagnostics for display, audio, network, services, packages, boot, storage, and Bluetooth.
+The GUI also includes a workflow rail and issue dashboard. Workflow buttons run focused read-only diagnostics for display, audio, network, services, packages, boot, storage, and Bluetooth, then ask the model for a subsystem-specific summary.
 
 ## Docker
 
@@ -90,8 +96,11 @@ The GUI includes buttons for:
 - `Apply Updates`: runs the detected package manager update command when package update permission is enabled.
 - `Plan Folders`: previews moves from `~/Downloads` and `~/Desktop` into `~/Organized` by file type.
 - `Organize`: applies the folder plan when personal folder organization permission is enabled.
+- `Export Audit` / `Export Profile`: downloads local JSON for review, issue reports, or backups.
 
 The agent stores local memory in `.lta_data/` by default. Set `LTA_DATA_DIR` to use a different location.
+
+Scans include suggested repair plans. These plans are guidance only; commands that can modify the system still require the configured permissions and confirmation flow.
 
 For commands that use `sudo`, launch the GUI from a terminal so password prompts are visible if your sudo session is not already authenticated.
 
