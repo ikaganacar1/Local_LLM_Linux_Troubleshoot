@@ -518,12 +518,6 @@
       padding: 36px 14px;
       background: var(--panel);
     }
-    .approval-actions {
-      display: flex;
-      gap: 8px;
-      margin-top: 10px;
-      flex-wrap: wrap;
-    }
     dialog {
       width: min(920px, calc(100vw - 32px));
       max-height: min(820px, calc(100vh - 32px));
@@ -605,6 +599,32 @@
       display: flex;
       justify-content: flex-end;
       gap: 8px;
+    }
+    .confirmation-body {
+      display: grid;
+      gap: 12px;
+    }
+    .command-preview {
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel-2);
+      padding: 9px 10px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: #dbeafe;
+    }
+    .confirmation-details {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-2);
+      padding: 9px 10px;
+    }
+    .confirmation-details summary {
+      cursor: pointer;
+      color: var(--muted);
+      font-weight: 800;
     }
     @media (max-width: 940px) {
       .app { grid-template-columns: 1fr; }
@@ -778,6 +798,31 @@
     </div>
   </dialog>
 
+  <dialog id="confirmDialog">
+    <div class="modal-header">
+      <h2>Confirm Action</h2>
+      <button id="closeConfirm" class="secondary" type="button">Close</button>
+    </div>
+    <div class="modal-body">
+      <div class="confirmation-body">
+        <div id="confirmReason"></div>
+        <div id="confirmCommandPreview" class="command-preview"></div>
+        <details class="confirmation-details">
+          <summary>Full command</summary>
+          <div id="confirmCommandFull"></div>
+        </details>
+        <details class="confirmation-details">
+          <summary>Safety notes</summary>
+          <div id="confirmPlan"></div>
+        </details>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button id="confirmSkip" class="secondary" type="button">Skip</button>
+      <button id="confirmRun" class="danger" type="button">Run</button>
+    </div>
+  </dialog>
+
   <script>
     const workspace = document.querySelector("#workspace");
     const log = document.querySelector("#log");
@@ -800,6 +845,11 @@
     const loginDialog = document.querySelector("#loginDialog");
     const loginPassword = document.querySelector("#loginPassword");
     const loginError = document.querySelector("#loginError");
+    const confirmDialog = document.querySelector("#confirmDialog");
+    const confirmReason = document.querySelector("#confirmReason");
+    const confirmCommandPreview = document.querySelector("#confirmCommandPreview");
+    const confirmCommandFull = document.querySelector("#confirmCommandFull");
+    const confirmPlan = document.querySelector("#confirmPlan");
     const authToken = "__LTA_AUTH_TOKEN__";
     let loginToken = sessionStorage.getItem("lta-login-token") || "";
     const params = {
@@ -823,6 +873,7 @@
     let chats = {};
     let currentContextSize = Number(localStorage.getItem("lta-context-size") || "0") || null;
     let issueTasks = [];
+    let currentConfirmationCallback = null;
 
     function nearBottom() {
       return workspace.scrollHeight - workspace.scrollTop - workspace.clientHeight < 120;
@@ -1590,7 +1641,7 @@
         const status = String(task.status || "open").toLowerCase();
         card.className = `issue ${status}`;
         const title = document.createElement("strong");
-        title.textContent = `${status.replaceAll("_", " ")}: ${task.title || "Issue"}`;
+        title.textContent = task.title || "Issue";
         const detail = document.createElement("div");
         detail.textContent = task.reason || task.detail || "";
         card.append(title, detail);
@@ -1608,7 +1659,6 @@
       wrap.className = "plan-grid";
       if (!plan) return wrap;
       for (const [label, value] of Object.entries({
-        Risk: plan.risk,
         Backup: plan.backup,
         Rollback: plan.rollback,
         Verify: plan.verify
@@ -1976,27 +2026,22 @@
     }
 
     function renderApproval(reason, command, callback, plan) {
-      const wrap = document.createElement("div");
-      const reasonEl = document.createElement("div");
-      reasonEl.textContent = reason || "Approval required";
-      wrap.appendChild(reasonEl);
-      wrap.appendChild(codeBlock(command));
-      wrap.appendChild(renderPlan(plan));
-      const actions = document.createElement("div");
-      actions.className = "approval-actions";
-      const run = document.createElement("button");
-      run.className = "danger";
-      run.type = "button";
-      run.textContent = "Run";
-      const skip = document.createElement("button");
-      skip.className = "secondary";
-      skip.type = "button";
-      skip.textContent = "Skip";
-      actions.append(run, skip);
-      wrap.appendChild(actions);
-      addEntry("warn", "Confirmation", "", wrap);
-      run.addEventListener("click", () => callback(true));
-      skip.addEventListener("click", () => callback(false));
+      currentConfirmationCallback = callback;
+      confirmReason.textContent = reason || "Approval required before running this action.";
+      confirmCommandPreview.textContent = command || "(internal action)";
+      confirmCommandPreview.title = command || "";
+      confirmCommandFull.textContent = "";
+      confirmCommandFull.appendChild(codeBlock(command || "(internal action)"));
+      confirmPlan.textContent = "";
+      confirmPlan.appendChild(renderPlan(plan));
+      if (!confirmDialog.open) confirmDialog.showModal();
+    }
+
+    function resolveConfirmation(approved) {
+      const callback = currentConfirmationCallback;
+      currentConfirmationCallback = null;
+      if (confirmDialog.open) confirmDialog.close();
+      if (callback) callback(approved);
     }
 
     async function approveCommand(approved) {
@@ -2045,6 +2090,13 @@
     darkMode.addEventListener("change", () => applyTheme(darkMode.checked ? "dark" : "light"));
     document.querySelector("#saveSettings").addEventListener("click", saveSettings);
     document.querySelector("#loginSubmit").addEventListener("click", unlockUi);
+    document.querySelector("#confirmRun").addEventListener("click", () => resolveConfirmation(true));
+    document.querySelector("#confirmSkip").addEventListener("click", () => resolveConfirmation(false));
+    document.querySelector("#closeConfirm").addEventListener("click", () => resolveConfirmation(false));
+    confirmDialog.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      resolveConfirmation(false);
+    });
     loginPassword.addEventListener("keydown", (event) => {
       if (event.key === "Enter") unlockUi();
     });
