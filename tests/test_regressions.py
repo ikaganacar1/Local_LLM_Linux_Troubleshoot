@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -22,6 +23,8 @@ from linux_troubleshoot_agent.web import (
     WebSession,
     _index_asset,
     _extract_context_size,
+    _extract_model_context_size,
+    _extract_token_count,
     _optional_float_payload,
     _optional_int_payload,
     _parse_issue_review,
@@ -33,6 +36,8 @@ from linux_troubleshoot_agent.web import (
     handle_issue_review,
     handle_login,
     handle_model_defaults,
+    handle_models,
+    handle_token_count,
 )
 
 
@@ -291,6 +296,36 @@ class WebRegressionTests(unittest.TestCase):
         self.assertEqual(response["parameters"]["temperature"], 0.45)
         self.assertEqual(response["context_size"], 8192)
 
+    def test_models_endpoint_reports_context_from_router_metadata(self) -> None:
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps(
+                    {
+                        "data": [
+                            {
+                                "id": "qwen",
+                                "owned_by": "llamacpp",
+                                "status": {
+                                    "args": ["--alias", "qwen", "--ctx-size", "200000"],
+                                    "preset": "ctx-size = 200000\nn-predict = 32768\n",
+                                },
+                            }
+                        ]
+                    }
+                ).encode("utf-8")
+
+        with patch("linux_troubleshoot_agent.web.urllib.request.urlopen", lambda *args, **kwargs: FakeResponse()):
+            response = handle_models({"base_url": "http://127.0.0.1:11435/v1"})
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["models"][0]["context_size"], 200000)
+
     def test_context_size_can_be_extracted_from_nested_props(self) -> None:
         self.assertEqual(
             _extract_context_size(
@@ -299,6 +334,58 @@ class WebRegressionTests(unittest.TestCase):
             200192,
         )
         self.assertEqual(_extract_context_size({"n_ctx": 32768}), 32768)
+
+    def test_context_size_can_be_extracted_from_model_args_and_preset(self) -> None:
+        self.assertEqual(
+            _extract_model_context_size({"status": {"args": ["--ctx-size=131072"]}}),
+            131072,
+        )
+        self.assertEqual(
+            _extract_model_context_size({"status": {"preset": "ctx-size = 32768\n"}}),
+            32768,
+        )
+
+    def test_token_count_uses_llamacpp_tokenize_endpoint(self) -> None:
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps({"tokens": [1, 2, 3]}).encode("utf-8")
+
+        requested: list[tuple[str, dict[str, Any]]] = []
+
+        def fake_urlopen(request, timeout=0):
+            requested.append(
+                (
+                    request.full_url,
+                    json.loads(request.data.decode("utf-8")),
+                )
+            )
+            return FakeResponse()
+
+        with patch("linux_troubleshoot_agent.web.urllib.request.urlopen", fake_urlopen):
+            response = handle_token_count(
+                {
+                    "base_url": "http://127.0.0.1:11435/v1",
+                    "model": "qwen",
+                    "text": "hello world",
+                }
+            )
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["tokens"], 3)
+        self.assertEqual(requested[0][0], "http://127.0.0.1:11435/tokenize")
+        self.assertEqual(requested[0][1]["model"], "qwen")
+        self.assertEqual(requested[0][1]["content"], "hello world")
+
+    def test_token_count_extractor_supports_count_shapes(self) -> None:
+        self.assertEqual(_extract_token_count({"tokens": [1, 2]}), 2)
+        self.assertEqual(_extract_token_count({"token_count": 42}), 42)
+        self.assertEqual(_extract_token_count({"n_tokens": 7}), 7)
 
     def test_workflow_action_returns_structured_scan_and_audit(self) -> None:
         with (
@@ -480,6 +567,15 @@ class StaticConfigurationTests(unittest.TestCase):
         self.assertIn("context_size", html)
         self.assertIn("Remaining Context", html)
         self.assertIn("function updateTopIndicators()", html)
+        self.assertIn("let modelContextSizes = {}", html)
+        self.assertIn("function applyKnownContextSize", html)
+        self.assertIn("lta-context-size:", html)
+        self.assertIn("model.value = ids[0]", html)
+        self.assertIn('post("/api/token-count"', html)
+        self.assertIn("function refreshTokenCount()", html)
+        self.assertIn("llama.cpp tokenizer", html)
+        self.assertIn("Remaining context needs the model context size", html)
+        self.assertIn("usedContextTokens()", html)
 
     def test_index_embeds_local_auth_token_placeholder_replacement(self) -> None:
         html = _index_asset().decode("utf-8")

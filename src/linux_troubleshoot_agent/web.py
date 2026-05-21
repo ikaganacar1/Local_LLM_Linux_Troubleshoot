@@ -140,6 +140,9 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/model-defaults":
                 self._send_json(handle_model_defaults(payload))
                 return
+            if self.path == "/api/token-count":
+                self._send_json(handle_token_count(payload))
+                return
             if self.path == "/api/title":
                 self._send_json(handle_title(payload))
                 return
@@ -261,7 +264,14 @@ def handle_models(payload: dict[str, Any]) -> dict[str, Any]:
     models = []
     for item in body.get("data", []):
         if isinstance(item, dict) and item.get("id"):
-            models.append({"id": str(item["id"]), "owned_by": str(item.get("owned_by", ""))})
+            model_info: dict[str, Any] = {
+                "id": str(item["id"]),
+                "owned_by": str(item.get("owned_by", "")),
+            }
+            context_size = _extract_model_context_size(item)
+            if context_size:
+                model_info["context_size"] = context_size
+            models.append(model_info)
     return {"ok": True, "models": models}
 
 
@@ -304,6 +314,53 @@ def handle_model_defaults(payload: dict[str, Any]) -> dict[str, Any]:
     return {"ok": False, "error": f"Could not load llama.cpp defaults: {detail}"}
 
 
+def handle_token_count(payload: dict[str, Any]) -> dict[str, Any]:
+    env_config = Config.from_env()
+    base_url = str(payload.get("base_url") or env_config.base_url).strip().rstrip("/")
+    model = str(payload.get("model") or env_config.model).strip()
+    text = str(payload.get("text") or "")
+    api_key = str(payload.get("api_key") or "").strip() or env_config.api_key
+    if not text:
+        return {"ok": True, "tokens": 0, "source": "/tokenize"}
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    body = json.dumps({"model": model, "content": text, "add_special": False}).encode("utf-8")
+    errors: list[str] = []
+    for url in _tokenize_urls(base_url):
+        request = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=_tokenize_timeout_seconds()) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            errors.append(f"{url} returned HTTP {exc.code}")
+            continue
+        except TimeoutError:
+            errors.append(f"{url} timed out")
+            continue
+        except urllib.error.URLError as exc:
+            errors.append(str(exc))
+            continue
+        except json.JSONDecodeError:
+            return {"ok": False, "error": "llama.cpp returned invalid JSON for tokenization."}
+
+        count = _extract_token_count(data)
+        if count is not None:
+            return {"ok": True, "tokens": count, "source": "/tokenize"}
+        errors.append("No token count found in tokenizer response.")
+
+    detail = "; ".join(errors[-2:]) if errors else "No response from llama.cpp tokenizer."
+    return {"ok": False, "error": f"Could not tokenize context: {detail}"}
+
+
+def _tokenize_timeout_seconds() -> int:
+    try:
+        value = int(os.environ.get("LTA_TOKENIZE_TIMEOUT", "90"))
+    except ValueError:
+        value = 90
+    return max(5, min(value, 300))
+
+
 def _props_urls(base_url: str, model: str) -> list[str]:
     trimmed = base_url.rstrip("/")
     roots = []
@@ -322,6 +379,38 @@ def _props_urls(base_url: str, model: str) -> list[str]:
             seen.add(url)
             urls.append(url)
     return urls
+
+
+def _tokenize_urls(base_url: str) -> list[str]:
+    trimmed = base_url.rstrip("/")
+    roots = []
+    if trimmed.endswith("/v1"):
+        roots.append(trimmed[: -len("/v1")])
+    roots.append(trimmed)
+
+    seen: set[str] = set()
+    urls: list[str] = []
+    for root in roots:
+        url = f"{root}/tokenize"
+        if url not in seen:
+            seen.add(url)
+            urls.append(url)
+    return urls
+
+
+def _extract_token_count(body: Any) -> int | None:
+    if not isinstance(body, dict):
+        return None
+    for key in ("count", "token_count", "n_tokens"):
+        value = body.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)) and value >= 0:
+            return int(value)
+    tokens = body.get("tokens")
+    if isinstance(tokens, list):
+        return len(tokens)
+    return None
 
 
 def _extract_generation_parameters(body: Any) -> dict[str, int | float]:
@@ -383,6 +472,63 @@ def _extract_context_size(body: Any) -> int | None:
             continue
         if isinstance(value, (int, float)) and value > 0:
             return int(value)
+    return None
+
+
+def _extract_model_context_size(item: Any) -> int | None:
+    if not isinstance(item, dict):
+        return None
+    candidates: list[Any] = [
+        item.get("context_size"),
+        item.get("ctx_size"),
+        item.get("ctx-size"),
+        item.get("n_ctx"),
+    ]
+    status = item.get("status")
+    if isinstance(status, dict):
+        candidates.extend(
+            [
+                status.get("context_size"),
+                status.get("ctx_size"),
+                status.get("ctx-size"),
+                status.get("n_ctx"),
+            ]
+        )
+        candidates.extend(_context_candidates_from_args(status.get("args")))
+        preset = status.get("preset")
+        if isinstance(preset, str):
+            candidates.extend(match.group(1) for match in re.finditer(r"(?:ctx-size|ctx_size|n_ctx)\s*=\s*(\d+)", preset))
+    return _first_positive_int(candidates)
+
+
+def _context_candidates_from_args(args: Any) -> list[Any]:
+    if not isinstance(args, list):
+        return []
+    candidates: list[Any] = []
+    flags = {"--ctx-size", "--ctx_size", "--n-ctx", "--n_ctx", "-c"}
+    for index, arg in enumerate(args):
+        if not isinstance(arg, str):
+            continue
+        if "=" in arg:
+            name, value = arg.split("=", 1)
+            if name in flags:
+                candidates.append(value)
+            continue
+        if arg in flags and index + 1 < len(args):
+            candidates.append(args[index + 1])
+    return candidates
+
+
+def _first_positive_int(values: list[Any]) -> int | None:
+    for value in values:
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)) and value > 0:
+            return int(value)
+        if isinstance(value, str) and value.strip().isdigit():
+            parsed = int(value.strip())
+            if parsed > 0:
+                return parsed
     return None
 
 

@@ -867,7 +867,12 @@
     let autoScrollEnabled = true;
     let currentChatId = null;
     let chats = {};
-    let currentContextSize = Number(localStorage.getItem("lta-context-size") || "0") || null;
+    let modelContextSizes = {};
+    let currentContextSize = storedContextSizeForModel(model.value.trim());
+    let currentUsedTokens = null;
+    let currentUsedTokenSource = "estimate";
+    let tokenCountTimer = null;
+    let tokenCountSerial = 0;
     let issueTasks = [];
     let currentConfirmationCallback = null;
 
@@ -969,6 +974,7 @@
       saveChats();
       renderHistory();
       updateTopIndicators();
+      scheduleTokenCount();
     }
 
     function persistSession() {
@@ -1009,6 +1015,7 @@
       autoScrollEnabled = true;
       scrollToBottom(true);
       updateTopIndicators();
+      scheduleTokenCount();
     }
 
     async function nameChatFromLLM(firstMessage) {
@@ -1403,13 +1410,61 @@
       };
     }
 
-    function estimateChatTokens() {
+    function contextTextForTokenization() {
       const chat = activeChat();
-      const text = (chat.items || [])
+      return (chat.items || [])
         .map((item) => `${item.title || ""}\n${item.body || ""}\n${item.pre || ""}`)
         .join("\n");
+    }
+
+    function estimateChatTokens() {
+      const text = contextTextForTokenization();
       const approximateContentTokens = Math.ceil(text.length / 4);
       return approximateContentTokens + 1200;
+    }
+
+    function usedContextTokens() {
+      return Number.isFinite(currentUsedTokens) ? currentUsedTokens : estimateChatTokens();
+    }
+
+    function invalidateTokenCount() {
+      currentUsedTokens = null;
+      currentUsedTokenSource = "estimate";
+    }
+
+    function scheduleTokenCount() {
+      if (tokenCountTimer) clearTimeout(tokenCountTimer);
+      tokenCountTimer = setTimeout(refreshTokenCount, 450);
+    }
+
+    async function refreshTokenCount() {
+      const text = contextTextForTokenization();
+      const serial = ++tokenCountSerial;
+      if (!text.trim()) {
+        currentUsedTokens = 0;
+        currentUsedTokenSource = "llama.cpp tokenizer";
+        updateTopIndicators();
+        return;
+      }
+      try {
+        const data = await post("/api/token-count", {
+          base_url: baseUrl.value.trim(),
+          model: model.value.trim(),
+          text
+        });
+        if (serial !== tokenCountSerial || !data.ok) return;
+        const tokens = Number(data.tokens);
+        if (!Number.isFinite(tokens) || tokens < 0) return;
+        currentUsedTokens = tokens + 1200;
+        currentUsedTokenSource = "llama.cpp tokenizer";
+        updateTopIndicators();
+      } catch {
+        if (serial === tokenCountSerial) {
+          currentUsedTokens = null;
+          currentUsedTokenSource = "estimate";
+          updateTopIndicators();
+        }
+      }
     }
 
     function formatCompactNumber(value) {
@@ -1419,19 +1474,51 @@
       return String(Math.max(0, Math.round(value)));
     }
 
+    function contextSizeStorageKey(modelId) {
+      return `lta-context-size:${modelId || "local-model"}`;
+    }
+
+    function storedContextSizeForModel(modelId) {
+      const exact = Number(localStorage.getItem(contextSizeStorageKey(modelId)) || "0");
+      if (Number.isFinite(exact) && exact > 0) return exact;
+      const legacy = Number(localStorage.getItem("lta-context-size") || "0");
+      return Number.isFinite(legacy) && legacy > 0 ? legacy : null;
+    }
+
+    function setCurrentContextSize(value, modelId = model.value.trim()) {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed <= 0) return false;
+      currentContextSize = parsed;
+      modelContextSizes[modelId] = parsed;
+      localStorage.setItem(contextSizeStorageKey(modelId), String(parsed));
+      localStorage.setItem("lta-context-size", String(parsed));
+      return true;
+    }
+
+    function applyKnownContextSize(modelId = model.value.trim()) {
+      if (setCurrentContextSize(modelContextSizes[modelId], modelId)) return true;
+      const stored = storedContextSizeForModel(modelId);
+      if (stored) {
+        currentContextSize = stored;
+        return true;
+      }
+      currentContextSize = null;
+      return false;
+    }
+
     function updateTopIndicators() {
       const selectedModel = model.value.trim() || "local-model";
       modelIndicator.textContent = selectedModel;
       modelIndicator.title = selectedModel;
+      const used = usedContextTokens();
       if (!currentContextSize) {
-        contextIndicator.textContent = "unknown";
-        contextIndicator.title = "llama.cpp context size is not loaded yet.";
+        contextIndicator.textContent = `~${formatCompactNumber(used)} used`;
+        contextIndicator.title = `Context size is not loaded yet. Used: ${used} (${currentUsedTokenSource}). Remaining context needs the model context size.`;
         return;
       }
-      const used = estimateChatTokens();
       const remaining = Math.max(0, currentContextSize - used);
       contextIndicator.textContent = `~${formatCompactNumber(remaining)} left`;
-      contextIndicator.title = `Approximate context remaining: ${remaining} tokens. Estimated used: ${used}. Context size: ${currentContextSize}.`;
+      contextIndicator.title = `Approximate context remaining: ${remaining} tokens. Used: ${used} (${currentUsedTokenSource}). Context size: ${currentContextSize}.`;
     }
 
     function applyTheme(value) {
@@ -1519,10 +1606,7 @@
         });
         if (!data.ok) throw new Error(data.error || "Could not load model defaults");
         applyParameterDefaults(data.parameters || {});
-        if (Number.isFinite(Number(data.context_size)) && Number(data.context_size) > 0) {
-          currentContextSize = Number(data.context_size);
-          localStorage.setItem("lta-context-size", String(currentContextSize));
-        }
+        setCurrentContextSize(data.context_size, selected);
         updateTopIndicators();
         addEntry(
           "agent",
@@ -1548,8 +1632,20 @@
 
     function renderModels(models) {
       modelList.textContent = "";
+      modelContextSizes = {};
       const ids = models.map((item) => item.id).filter(Boolean);
-      if (!ids.includes(model.value.trim())) ids.unshift(model.value.trim() || "local-model");
+      for (const item of models) {
+        const contextSize = Number(item.context_size);
+        if (item.id && Number.isFinite(contextSize) && contextSize > 0) {
+          modelContextSizes[item.id] = contextSize;
+        }
+      }
+      const current = model.value.trim();
+      if (ids.length && (!current || current === "local-model") && !ids.includes(current)) {
+        model.value = ids[0];
+      } else if (!ids.includes(current)) {
+        ids.unshift(current || "local-model");
+      }
       for (const id of ids) {
         const button = document.createElement("button");
         button.type = "button";
@@ -1559,14 +1655,19 @@
         button.addEventListener("click", () => selectModel(id));
         modelList.appendChild(button);
       }
+      applyKnownContextSize(model.value.trim());
       markActiveModel();
+      scheduleTokenCount();
       addEntry("agent", "Models", ids.length ? `Loaded ${ids.length} model option(s).` : "No models returned.", null, { persist: false });
     }
 
     function selectModel(id) {
       model.value = id;
+      applyKnownContextSize(id);
+      invalidateTokenCount();
       markActiveModel();
       updateTopIndicators();
+      scheduleTokenCount();
       loadModelDefaults(id);
     }
 
@@ -2080,8 +2181,16 @@
       scrollToBottom(true);
       updateFollowButton();
     });
-    model.addEventListener("input", markActiveModel);
-    model.addEventListener("change", () => loadModelDefaults(model.value.trim()));
+    model.addEventListener("input", () => {
+      applyKnownContextSize(model.value.trim());
+      invalidateTokenCount();
+      markActiveModel();
+      scheduleTokenCount();
+    });
+    model.addEventListener("change", () => {
+      scheduleTokenCount();
+      loadModelDefaults(model.value.trim());
+    });
     refreshModels.addEventListener("click", loadModels);
     darkMode.addEventListener("change", () => applyTheme(darkMode.checked ? "dark" : "light"));
     document.querySelector("#saveSettings").addEventListener("click", saveSettings);
