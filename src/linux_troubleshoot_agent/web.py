@@ -26,9 +26,15 @@ from .storage import (
     PermissionSettings,
     append_audit,
     auth_token,
+    create_chat,
+    delete_chat,
+    list_chats,
+    load_chat,
     load_memory,
     load_settings,
     remember_scan,
+    rename_chat,
+    save_chat,
     save_settings,
 )
 from .system_scan import (
@@ -142,6 +148,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/token-count":
                 self._send_json(handle_token_count(payload))
+                return
+            if self.path == "/api/chats":
+                self._send_json(handle_chats(payload))
                 return
             if self.path == "/api/title":
                 self._send_json(handle_title(payload))
@@ -530,6 +539,57 @@ def _first_positive_int(values: list[Any]) -> int | None:
             if parsed > 0:
                 return parsed
     return None
+
+
+def handle_chats(payload: dict[str, Any]) -> dict[str, Any]:
+    action = str(payload.get("action") or "list").strip()
+
+    if action == "list":
+        return {"ok": True, "chats": list_chats()}
+
+    if action == "create":
+        chat = create_chat(str(payload.get("title") or "New Chat"))
+        return {"ok": True, "chat": chat, "chats": list_chats()}
+
+    if action == "get":
+        chat = load_chat(str(payload.get("id") or ""))
+        if chat is None:
+            return {"ok": False, "error": "Chat not found."}
+        return {"ok": True, "chat": chat}
+
+    if action == "save":
+        raw_chat = payload.get("chat")
+        if not isinstance(raw_chat, dict):
+            return {"ok": False, "error": "Chat payload is missing."}
+        chat = save_chat(raw_chat)
+        return {"ok": True, "chat": chat, "chats": list_chats()}
+
+    if action == "rename":
+        chat = rename_chat(str(payload.get("id") or ""), str(payload.get("title") or ""))
+        if chat is None:
+            return {"ok": False, "error": "Chat not found."}
+        return {"ok": True, "chat": chat, "chats": list_chats()}
+
+    if action == "delete":
+        deleted = delete_chat(str(payload.get("id") or ""))
+        return {"ok": True, "deleted": deleted, "chats": list_chats()}
+
+    if action == "import":
+        imported = 0
+        raw_chats = payload.get("chats")
+        if isinstance(raw_chats, dict):
+            iterable = raw_chats.values()
+        elif isinstance(raw_chats, list):
+            iterable = raw_chats
+        else:
+            iterable = []
+        for item in iterable:
+            if isinstance(item, dict):
+                save_chat(item)
+                imported += 1
+        return {"ok": True, "imported": imported, "chats": list_chats()}
+
+    return {"ok": False, "error": f"Unknown chat action: {action}"}
 
 
 def handle_title(payload: dict[str, Any]) -> dict[str, Any]:

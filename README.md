@@ -22,7 +22,7 @@ http://127.0.0.1:11435/v1
 
 - Runs read-only diagnostics for services, packages, boot, storage, network, display, audio, and Bluetooth.
 - Streams model output in the chat, including collapsible reasoning when the model exposes thinking tokens.
-- Keeps chat history in the browser and local scan memory in `.lta_data/`.
+- Keeps chat history, scan memory, and audit data in local files under `.lta_data/`.
 - Lets you configure model, context/token settings, permissions, and theme from the GUI.
 - Supports package-manager-aware update checks for common Linux distros.
 - Uses a safety controller before executing commands.
@@ -47,7 +47,7 @@ The compose setup is intentionally local:
 - `network_mode: host` lets the container reach llama.cpp on `127.0.0.1:11435`.
 - `pid: host`, `privileged: true`, and `LTA_COMMAND_TARGET=host` allow host diagnostics instead of container-only checks.
 - `${HOME}` is mounted at `/host-home` for folder organization.
-- `.lta_data/` stores local memory and audit data.
+- `.lta_data/` stores local memory, audit data, and the SQLite chat database.
 
 Set a local UI password if other people can access your browser session:
 

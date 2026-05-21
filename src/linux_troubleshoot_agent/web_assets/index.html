@@ -222,18 +222,40 @@
       max-height: 260px;
       overflow: auto;
     }
-    .history-item {
+    .history-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 6px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 4px;
+      background: var(--panel-2);
+    }
+    .history-row.active {
+      border-color: var(--blue);
+      box-shadow: inset 3px 0 0 var(--blue);
+    }
+    .history-open {
       text-align: left;
-      border-color: var(--line);
+      border-color: transparent;
       min-height: 36px;
-      padding: 8px 10px;
+      padding: 7px 8px;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      background: transparent;
     }
-    .history-item.active {
-      border-color: var(--blue);
-      box-shadow: inset 3px 0 0 var(--blue);
+    .history-actions {
+      display: flex;
+      gap: 4px;
+    }
+    .history-action {
+      min-height: 30px;
+      padding: 5px 7px;
+      font-size: 11px;
+      color: var(--muted);
+      background: var(--panel-3);
     }
     .follow-off {
       border-color: var(--amber) !important;
@@ -794,6 +816,26 @@
     </div>
   </dialog>
 
+  <dialog id="chatDialog">
+    <div class="modal-header">
+      <h2 id="chatDialogTitle">Chat</h2>
+      <button id="closeChatDialog" class="secondary" type="button">Close</button>
+    </div>
+    <div class="modal-body">
+      <section class="settings-section">
+        <h3 id="chatDialogText">Update this chat.</h3>
+        <label id="chatTitleLabel">
+          Chat title
+          <input id="chatTitleInput" type="text" maxlength="80" spellcheck="false">
+        </label>
+      </section>
+    </div>
+    <div class="modal-footer">
+      <button id="cancelChatDialog" class="secondary" type="button">Cancel</button>
+      <button id="confirmChatDialog" class="primary" type="button">Save</button>
+    </div>
+  </dialog>
+
   <dialog id="confirmDialog">
     <div class="modal-header">
       <h2>Confirm Action</h2>
@@ -841,6 +883,12 @@
     const loginDialog = document.querySelector("#loginDialog");
     const loginPassword = document.querySelector("#loginPassword");
     const loginError = document.querySelector("#loginError");
+    const chatDialog = document.querySelector("#chatDialog");
+    const chatDialogTitle = document.querySelector("#chatDialogTitle");
+    const chatDialogText = document.querySelector("#chatDialogText");
+    const chatTitleLabel = document.querySelector("#chatTitleLabel");
+    const chatTitleInput = document.querySelector("#chatTitleInput");
+    const confirmChatDialog = document.querySelector("#confirmChatDialog");
     const confirmDialog = document.querySelector("#confirmDialog");
     const confirmReason = document.querySelector("#confirmReason");
     const confirmCommandPreview = document.querySelector("#confirmCommandPreview");
@@ -875,6 +923,8 @@
     let tokenCountSerial = 0;
     let issueTasks = [];
     let currentConfirmationCallback = null;
+    let pendingChatDialog = null;
+    let chatSaveTimer = null;
 
     function nearBottom() {
       return workspace.scrollHeight - workspace.scrollTop - workspace.clientHeight < 120;
@@ -917,53 +967,94 @@
       scrollBottomButton.textContent = autoScrollEnabled ? "Bottom" : "Follow Off";
     }
 
-    function loadChats() {
-      try {
-        chats = JSON.parse(localStorage.getItem("lta-chats") || "{}");
-      } catch {
-        chats = {};
-      }
-      const lastId = localStorage.getItem("lta-current-chat");
-      if (lastId && chats[lastId]) {
-        openChat(lastId);
+    async function loadChats() {
+      await migrateBrowserChats();
+      const data = await post("/api/chats", { action: "list" });
+      if (!data.ok) throw new Error(data.error || "Could not load chats");
+      chats = {};
+      for (const chat of data.chats || []) chats[chat.id] = { ...chat, items: [] };
+      const first = Object.values(chats)[0];
+      if (first) {
+        await openChat(first.id);
       } else {
-        createChat();
+        await createChat();
       }
       renderHistory();
     }
 
-    function saveChats() {
-      localStorage.setItem("lta-chats", JSON.stringify(chats));
-      if (currentChatId) localStorage.setItem("lta-current-chat", currentChatId);
+    async function migrateBrowserChats() {
+      const raw = localStorage.getItem("lta-chats");
+      if (!raw) return;
+      try {
+        const saved = JSON.parse(raw);
+        if (saved && Object.keys(saved).length) {
+          await post("/api/chats", { action: "import", chats: saved });
+        }
+      } catch {}
+      localStorage.removeItem("lta-chats");
+      localStorage.removeItem("lta-current-chat");
     }
 
-    function createChat() {
-      currentChatId = `chat-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-      sessionId = null;
-      chats[currentChatId] = {
-        id: currentChatId,
-        title: "New Chat",
-        sessionId: null,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        items: []
+    function saveChats(options = {}) {
+      if (!currentChatId || !chats[currentChatId]) return;
+      const run = async () => {
+        try {
+          const data = await post("/api/chats", { action: "save", chat: chats[currentChatId] });
+          if (!data.ok) throw new Error(data.error || "Could not save chat");
+          if (data.chat) chats[data.chat.id] = data.chat;
+          if (data.chats) {
+            for (const summary of data.chats) {
+              chats[summary.id] = { ...summary, items: chats[summary.id]?.items || [] };
+            }
+          }
+          renderHistory();
+        } catch (error) {
+          statusBox.textContent = String(error.message || error);
+        }
       };
-      renderChat();
-      renderHistory();
-      saveChats();
+      if (chatSaveTimer) clearTimeout(chatSaveTimer);
+      if (options.immediate) {
+        run();
+      } else {
+        chatSaveTimer = setTimeout(run, 350);
+      }
     }
 
-    function openChat(id) {
-      if (!chats[id]) return;
-      currentChatId = id;
-      sessionId = chats[id].sessionId || null;
+    async function createChat() {
+      const data = await post("/api/chats", { action: "create", title: "New Chat" });
+      if (!data.ok) throw new Error(data.error || "Could not create chat");
+      const chat = data.chat;
+      chats[chat.id] = chat;
+      currentChatId = chat.id;
+      sessionId = null;
       renderChat();
       renderHistory();
-      saveChats();
+    }
+
+    async function openChat(id) {
+      if (!id) return;
+      const data = await post("/api/chats", { action: "get", id });
+      if (!data.ok) throw new Error(data.error || "Could not open chat");
+      chats[data.chat.id] = data.chat;
+      currentChatId = data.chat.id;
+      sessionId = data.chat.sessionId || null;
+      renderChat();
+      renderHistory();
     }
 
     function activeChat() {
-      if (!currentChatId || !chats[currentChatId]) createChat();
+      if (!currentChatId || !chats[currentChatId]) {
+        const now = new Date().toISOString();
+        currentChatId = `chat-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        chats[currentChatId] = {
+          id: currentChatId,
+          title: "New Chat",
+          sessionId: null,
+          createdAt: now,
+          updatedAt: now,
+          items: []
+        };
+      }
       return chats[currentChatId];
     }
 
@@ -981,21 +1072,101 @@
       const chat = activeChat();
       chat.sessionId = sessionId;
       chat.updatedAt = new Date().toISOString();
-      saveChats();
+      saveChats({ immediate: true });
     }
 
     function renderHistory() {
       historyList.textContent = "";
       const ordered = Object.values(chats).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
       for (const chat of ordered) {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "history-item";
-        button.classList.toggle("active", chat.id === currentChatId);
-        button.textContent = chat.title || "Untitled";
-        button.title = chat.title || "Untitled";
-        button.addEventListener("click", () => openChat(chat.id));
-        historyList.appendChild(button);
+        const row = document.createElement("div");
+        row.className = "history-row";
+        row.classList.toggle("active", chat.id === currentChatId);
+        const open = document.createElement("button");
+        open.type = "button";
+        open.className = "history-open";
+        open.textContent = chat.title || "Untitled";
+        open.title = `${chat.title || "Untitled"} (${chat.itemCount || chat.items?.length || 0} entries)`;
+        open.addEventListener("click", () => openChat(chat.id).catch((error) => addEntry("blocked", "Error", String(error.message || error))));
+        const actions = document.createElement("div");
+        actions.className = "history-actions";
+        const rename = document.createElement("button");
+        rename.type = "button";
+        rename.className = "history-action";
+        rename.textContent = "Rename";
+        rename.addEventListener("click", () => showChatDialog("rename", chat.id));
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "history-action";
+        remove.textContent = "Delete";
+        remove.addEventListener("click", () => showChatDialog("delete", chat.id));
+        actions.append(rename, remove);
+        row.append(open, actions);
+        historyList.appendChild(row);
+      }
+    }
+
+    function showChatDialog(action, id) {
+      const chat = chats[id];
+      if (!chat) return;
+      pendingChatDialog = { action, id };
+      chatTitleInput.value = chat.title || "Untitled";
+      if (action === "delete") {
+        chatDialogTitle.textContent = "Delete Chat";
+        chatDialogText.textContent = "Delete this saved chat from the local database.";
+        chatTitleLabel.style.display = "none";
+        confirmChatDialog.textContent = "Delete";
+        confirmChatDialog.className = "danger";
+      } else {
+        chatDialogTitle.textContent = "Rename Chat";
+        chatDialogText.textContent = "Set a short name for this saved chat.";
+        chatTitleLabel.style.display = "";
+        confirmChatDialog.textContent = "Save";
+        confirmChatDialog.className = "primary";
+        setTimeout(() => chatTitleInput.focus(), 0);
+      }
+      chatDialog.showModal();
+    }
+
+    function closeChatEditor() {
+      pendingChatDialog = null;
+      chatDialog.close();
+    }
+
+    async function confirmChatEditor() {
+      if (!pendingChatDialog) return;
+      const { action, id } = pendingChatDialog;
+      try {
+        if (action === "delete") {
+          const data = await post("/api/chats", { action: "delete", id });
+          if (!data.ok) throw new Error(data.error || "Could not delete chat");
+          delete chats[id];
+          if (currentChatId === id) {
+            const next = (data.chats || []).find((chat) => chat.id !== id);
+            if (next) {
+              chats[next.id] = { ...next, items: chats[next.id]?.items || [] };
+              await openChat(next.id);
+            } else {
+              await createChat();
+            }
+          }
+          for (const summary of data.chats || []) {
+            chats[summary.id] = { ...summary, items: chats[summary.id]?.items || [] };
+          }
+        } else {
+          const title = chatTitleInput.value.trim();
+          const data = await post("/api/chats", { action: "rename", id, title });
+          if (!data.ok) throw new Error(data.error || "Could not rename chat");
+          if (data.chat) chats[data.chat.id] = data.chat;
+          for (const summary of data.chats || []) {
+            chats[summary.id] = { ...summary, items: chats[summary.id]?.items || [] };
+          }
+        }
+        closeChatEditor();
+        renderChat();
+        renderHistory();
+      } catch (error) {
+        addEntry("blocked", "Error", String(error.message || error));
       }
     }
 
@@ -1574,7 +1745,12 @@
         sessionStorage.setItem("lta-login-token", loginToken);
         loginDialog.close();
         loadState()
-          .then((ready) => { if (ready) loadModels(); })
+          .then(async (ready) => {
+            if (ready) {
+              await loadChats();
+              loadModels();
+            }
+          })
           .catch((error) => addEntry("blocked", "Error", String(error.message || error)));
       } catch (error) {
         loginError.textContent = String(error.message || error);
@@ -2173,7 +2349,7 @@
 
     document.querySelector("#openSettings").addEventListener("click", () => settingsDialog.showModal());
     document.querySelector("#closeSettings").addEventListener("click", () => settingsDialog.close());
-    document.querySelector("#newChat").addEventListener("click", createChat);
+    document.querySelector("#newChat").addEventListener("click", () => createChat().catch((error) => addEntry("blocked", "Error", String(error.message || error))));
     document.querySelector("#exportAudit").addEventListener("click", () => exportData("audit"));
     document.querySelector("#exportProfile").addEventListener("click", () => exportData("profile"));
     document.querySelector("#scrollBottom").addEventListener("click", () => {
@@ -2195,6 +2371,16 @@
     darkMode.addEventListener("change", () => applyTheme(darkMode.checked ? "dark" : "light"));
     document.querySelector("#saveSettings").addEventListener("click", saveSettings);
     document.querySelector("#loginSubmit").addEventListener("click", unlockUi);
+    document.querySelector("#closeChatDialog").addEventListener("click", closeChatEditor);
+    document.querySelector("#cancelChatDialog").addEventListener("click", closeChatEditor);
+    document.querySelector("#confirmChatDialog").addEventListener("click", confirmChatEditor);
+    chatDialog.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      closeChatEditor();
+    });
+    chatTitleInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") confirmChatEditor();
+    });
     document.querySelector("#confirmRun").addEventListener("click", () => resolveConfirmation(true));
     document.querySelector("#confirmSkip").addEventListener("click", () => resolveConfirmation(false));
     document.querySelector("#closeConfirm").addEventListener("click", () => resolveConfirmation(false));
@@ -2216,10 +2402,14 @@
 
     applyTheme(localStorage.getItem("lta-theme") || "dark");
     loadLocalParams();
-    loadChats();
     updateFollowButton();
     loadState()
-      .then((ready) => { if (ready) loadModels(); })
+      .then(async (ready) => {
+        if (ready) {
+          await loadChats();
+          loadModels();
+        }
+      })
       .catch((error) => addEntry("blocked", "Error", String(error.message || error)));
   </script>
 </body>

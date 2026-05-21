@@ -14,7 +14,17 @@ from unittest.mock import patch
 from linux_troubleshoot_agent.llama_cpp_client import LlamaCppClient
 from linux_troubleshoot_agent.safety import SafetyDecision, classify_command
 from linux_troubleshoot_agent.shell import run_command
-from linux_troubleshoot_agent.storage import PermissionSettings, auth_token, load_memory, save_settings
+from linux_troubleshoot_agent.storage import (
+    PermissionSettings,
+    auth_token,
+    create_chat,
+    delete_chat,
+    list_chats,
+    load_chat,
+    load_memory,
+    rename_chat,
+    save_settings,
+)
 from linux_troubleshoot_agent.system_scan import recommend_repairs, summarize_scan, update_check_command
 from linux_troubleshoot_agent.web import (
     Handler,
@@ -33,6 +43,7 @@ from linux_troubleshoot_agent.web import (
     handle_approval,
     handle_action,
     handle_export,
+    handle_chats,
     handle_issue_review,
     handle_login,
     handle_model_defaults,
@@ -210,6 +221,59 @@ class WebRegressionTests(unittest.TestCase):
         self.assertTrue(skipped["ok"])
         self.assertEqual(skipped["events"][0]["type"], "notice")
         self.assertIn("skipped", skipped["events"][0]["content"].lower())
+
+    def test_chats_are_persisted_in_sqlite_database(self) -> None:
+        chat = create_chat("Driver Debug")
+        chat["sessionId"] = "session-1"
+        chat["items"].append(
+            {
+                "kind": "user",
+                "title": "User",
+                "body": "HDMI does not work",
+                "pre": "",
+            }
+        )
+        saved = load_chat(chat["id"])
+        assert saved is not None
+        saved["items"] = chat["items"]
+        saved["sessionId"] = chat["sessionId"]
+        save_result = handle_chats({"action": "save", "chat": saved})
+
+        self.assertTrue(save_result["ok"])
+        loaded = load_chat(chat["id"])
+        assert loaded is not None
+        self.assertEqual(loaded["sessionId"], "session-1")
+        self.assertEqual(loaded["items"][0]["body"], "HDMI does not work")
+        self.assertTrue((Path(os.environ["LTA_DATA_DIR"]) / "chats.sqlite3").exists())
+
+    def test_chat_api_can_rename_delete_and_import_browser_cache(self) -> None:
+        imported = handle_chats(
+            {
+                "action": "import",
+                "chats": {
+                    "old": {
+                        "id": "old",
+                        "title": "Old Browser Chat",
+                        "items": [{"kind": "agent", "title": "Agent", "body": "stored", "pre": ""}],
+                    }
+                },
+            }
+        )
+        self.assertTrue(imported["ok"])
+        self.assertEqual(imported["imported"], 1)
+        self.assertEqual(list_chats()[0]["id"], "old")
+
+        renamed = handle_chats({"action": "rename", "id": "old", "title": "Saved Chat"})
+        self.assertTrue(renamed["ok"])
+        self.assertEqual(renamed["chat"]["title"], "Saved Chat")
+        direct_rename = rename_chat("old", "Again")
+        assert direct_rename is not None
+        self.assertEqual(direct_rename["title"], "Again")
+
+        deleted = handle_chats({"action": "delete", "id": "old"})
+        self.assertTrue(deleted["ok"])
+        self.assertTrue(deleted["deleted"])
+        self.assertTrue(delete_chat("missing") is False)
 
     def test_model_defaults_are_loaded_from_llamacpp_props(self) -> None:
         class FakeResponse:
@@ -628,6 +692,12 @@ class StaticConfigurationTests(unittest.TestCase):
         self.assertIn("function reviewIssuesAfterChange(evidence)", html)
         self.assertIn('post("/api/review-issues"', html)
         self.assertIn("LLM is reviewing issue tasks", html)
+        self.assertIn('id="chatDialog"', html)
+        self.assertIn('post("/api/chats"', html)
+        self.assertIn("function migrateBrowserChats()", html)
+        self.assertIn("localStorage.removeItem(\"lta-chats\")", html)
+        self.assertNotIn("localStorage.setItem(\"lta-chats\"", html)
+        self.assertNotIn("localStorage.setItem(\"lta-current-chat\"", html)
         self.assertNotIn("function refreshIssuesAfterChange(label)", html)
         self.assertNotIn("basePayload({ analyze: false })", html)
 
